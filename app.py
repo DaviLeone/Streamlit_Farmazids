@@ -177,7 +177,18 @@ def listar_perguntas(usuario, limite=15):
 # ---------- chamada à state machine ----------
 @st.cache_resource
 def cliente_sfn():
-    return boto3.client("stepfunctions", region_name=REGIAO)
+    # No Streamlit Cloud as credenciais vêm de "Secrets"; no computador, do `aws configure`.
+    try:
+        aws = st.secrets["aws"]
+        return boto3.client(
+            "stepfunctions",
+            region_name=aws.get("region", REGIAO),
+            aws_access_key_id=aws["access_key_id"],
+            aws_secret_access_key=aws["secret_access_key"],
+            aws_session_token=aws.get("session_token"),
+        )
+    except (KeyError, FileNotFoundError):
+        return boto3.client("stepfunctions", region_name=REGIAO)
 
 
 def consultar(pergunta):
