@@ -11,6 +11,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
+import altair as alt
 import boto3
 import pandas as pd
 import streamlit as st
@@ -22,87 +23,140 @@ REGIAO = "us-east-2"
 
 BASE = Path(__file__).parent
 DB = BASE / "farmazids.db"
-LOGO = BASE / "logo.png"          # logo "FARMAZIDS MEDICINA ORIENTAL"
-EMBLEMA = BASE / "emblema.png"    # emblema redondo
+LOGO = BASE / "logo.png"          # logo "FARMAZIDS MEDICINA ORIENTAL" (original, sem alterações)
+EMBLEMA = BASE / "emblema.png"    # emblema redondo (original, sem alterações)
 USUARIO_OK = re.compile(r"^[a-z0-9_.-]{3,30}$")
+RECENTES = 3          # quantas consultas aparecem em "Consultas recentes"
+MAX_LINHAS = 200      # linhas exibidas na tabela da tela (o CSV leva todas)
+
+# Paleta do projeto
+ROXO, DOURADO, CINZA, FUNDO, LILAS = "#42205A", "#C9AD7A", "#C9D0DA", "#FBF9F4", "#D8C3EE"
 
 
 def _esticar(fn):
-    """Faz o botão ocupar toda a largura, em qualquer versão do Streamlit."""
+    """Largura total do componente, em qualquer versão do Streamlit."""
     return {"width": "stretch"} if "width" in inspect.signature(fn).parameters else {"use_container_width": True}
 
 
 ESTICAR = _esticar(st.button)
 ESTICAR_FORM = _esticar(st.form_submit_button)
+ESTICAR_ALT = _esticar(st.altair_chart)
 
+# ---------------------------------------------------------------- estilo
+PRIM = [
+    '.stButton button[kind="primary"]',
+    '[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"]',
+    '[data-testid="stBaseButton-primary"]',
+    '[data-testid="stBaseButton-primaryFormSubmit"]',
+]
 CSS = """<style>
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;800&family=Poppins:wght@400;500&display=swap');
-:root { --roxo:#42205A; --dourado:#C9AD7A; --cinza:#C9D0DA; --fundo:#FBF9F4; --lilas:#D8C3EE; }
-.stApp { background:var(--fundo); color:#2b2b2b; }
-[data-testid="stToolbar"] { display:none; }
-[data-testid="stDecoration"], footer { display:none; }
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800&family=Poppins:wght@400;500;600&display=swap');
+:root { --roxo:#42205A; --dourado:#C9AD7A; --cinza:#C9D0DA; --fundo:#FBF9F4; --lilas:#D8C3EE;
+        --texto:#2B2B2B; --mudo:rgba(66,32,90,.66); --borda:rgba(201,208,218,.85); }
+.stApp { background:var(--fundo); color:var(--texto); }
+.stApp, .stApp p, .stApp label, .stApp input, .stApp button, .stApp li, .stApp td, .stApp th, .stApp textarea { font-family:'Poppins',sans-serif; }
+[data-testid="stToolbar"], [data-testid="stDecoration"], footer, [data-testid="InputInstructions"] { display:none !important; }
 [data-testid="stHeader"] { background:transparent; }
-.block-container { max-width:980px; padding-top:1.5rem; }
+.block-container { max-width:1180px; padding-top:2rem; padding-bottom:3rem; }
 
-/* textos */
-.titulo { font-family:'Cinzel',serif; font-weight:800; color:var(--roxo); text-align:center; font-size:2.3rem; margin:.4rem 0 1.4rem; }
-.rotulo { font-family:'Cinzel',serif; font-weight:700; color:var(--roxo); font-size:1.35rem; margin:.9rem 0 .3rem; }
-.sub { font-family:'Cinzel',serif; font-weight:700; color:var(--roxo); font-size:1.2rem; margin:1.2rem 0 .3rem; }
-.linha { border:0; border-top:3px solid var(--roxo); margin:.6rem 1rem 1rem; opacity:1; }
-.nao-cadastrou { text-align:right; font-family:'Poppins',sans-serif; color:var(--dourado); margin:.8rem 0 .5rem; }
-.campo-nome { background:var(--cinza); border-radius:999px; padding:.85rem 2rem; font-family:'Cinzel',serif; font-weight:700; font-size:1.4rem; color:var(--roxo); margin-bottom:2rem; }
-
-/* logos */
-.logo-img { text-align:center; }
-.logo-img img { width:100%; max-width:520px; height:auto; }
-.emb { display:flex; align-items:center; }
-.emb-dir { justify-content:flex-end; }
-.emb-esq { justify-content:flex-start; }
-.emb img { width:72px; height:72px; }
-.logo-txt { text-align:center; line-height:1.1; }
-.logo-a { font-family:'Cinzel',serif; font-weight:800; font-size:3rem; color:var(--roxo); }
-.logo-b { font-family:'Cinzel',serif; font-weight:600; font-size:1.4rem; letter-spacing:.2em; color:var(--dourado); }
+/* tipografia */
+.h1 { font-family:'Cinzel',serif; font-weight:800; font-size:2rem; line-height:1.2; color:var(--roxo); margin:0; }
+.h1::after { content:""; display:block; width:44px; height:3px; border-radius:2px; background:var(--dourado); margin-top:.7rem; }
+.h2 { font-family:'Cinzel',serif; font-weight:700; font-size:1.25rem; color:var(--roxo); margin:0 0 .2rem; }
+.mudo { color:var(--mudo); font-size:.95rem; line-height:1.6; margin:.7rem 0 1.4rem; }
+.rot { color:var(--mudo); font-size:.82rem; font-weight:600; margin:1.6rem 0 .45rem; }
+.pergunta { font-family:'Cinzel',serif; font-weight:700; font-size:1.35rem; line-height:1.35; color:var(--roxo); margin:1.8rem 0 .6rem; }
+.chip { display:inline-block; background:rgba(216,195,238,.5); color:var(--roxo); border-radius:999px; padding:.2rem .85rem; font-size:.8rem; font-weight:500; margin:0 .4rem .3rem 0; }
+.resposta { background:#fff; border:1px solid var(--borda); border-left:4px solid var(--dourado); border-radius:12px; padding:1.15rem 1.4rem; line-height:1.7; font-size:1rem; box-shadow:0 1px 3px rgba(66,32,90,.05); }
+.vazio { background:#fff; border:1px dashed var(--cinza); border-radius:16px; padding:2rem 2.2rem; margin-top:1.6rem; }
+.vazio .h2 { margin-bottom:.6rem; }
+.dica { color:var(--texto); font-size:.95rem; line-height:1.6; padding-left:1.3rem; position:relative; margin:.5rem 0; }
+.dica::before { content:""; position:absolute; left:0; top:.62em; width:.5rem; height:.5rem; border-radius:50%; background:var(--dourado); }
+.troca { color:var(--mudo); font-size:.9rem; text-align:center; margin:1.2rem 0 .5rem; }
 
 /* campos */
-div[data-baseweb="input"] { background:var(--cinza); border:2px solid transparent !important; border-radius:999px; box-shadow:none; }
-div[data-baseweb="input"]:focus-within { border-color:var(--roxo) !important; box-shadow:none; }
+[data-testid="stWidgetLabel"] p { color:var(--roxo); font-size:.85rem; font-weight:500; }
+div[data-baseweb="input"] { background:#fff; border:1.5px solid var(--cinza) !important; border-radius:12px; box-shadow:none; }
+div[data-baseweb="input"]:focus-within { border-color:var(--roxo) !important; box-shadow:0 0 0 3px rgba(216,195,238,.7); }
 div[data-baseweb="base-input"] { background:transparent; }
-[data-testid="stTextInput"] input { text-align:center; height:3.3rem; font-family:'Poppins',sans-serif; font-size:1.05rem; color:var(--roxo); }
+[data-testid="stTextInput"] input { height:3rem; font-size:.98rem; color:var(--texto); padding-left:1rem; }
 [data-testid="stTextInput"] input::placeholder { color:#8a8f98; }
+[data-testid="stForm"] { background:#fff; border:1px solid var(--borda); border-radius:16px; padding:1.4rem 1.5rem; box-shadow:0 1px 3px rgba(66,32,90,.05), 0 8px 24px rgba(66,32,90,.05); }
 
-/* botões (pílula roxa) */
-.stButton, [data-testid="stFormSubmitButton"] { width:100%; }
-.stButton button, [data-testid="stFormSubmitButton"] button { width:100% !important; background:var(--roxo); border:none; border-radius:999px; height:3.3rem; }
-.stButton button p, [data-testid="stFormSubmitButton"] button p { color:var(--dourado); font-family:'Cinzel',serif; font-weight:700; font-size:1.5rem; }
-.stButton button:hover, [data-testid="stFormSubmitButton"] button:hover { background:#5a2d7a; }
+/* botões: secundário (contorno) e primário (roxo) */
+.stButton button, [data-testid="stFormSubmitButton"] button, [data-testid="stDownloadButton"] button { border-radius:12px; height:3rem; border:1.5px solid var(--roxo); background:#fff; transition:background .15s; }
+.stButton button p, [data-testid="stFormSubmitButton"] button p, [data-testid="stDownloadButton"] button p { color:var(--roxo); font-weight:600; font-size:.95rem; }
+.stButton button:hover, [data-testid="stFormSubmitButton"] button:hover, [data-testid="stDownloadButton"] button:hover { background:rgba(216,195,238,.45); border-color:var(--roxo); }
+{{PRIM}} { background:var(--roxo) !important; border-color:var(--roxo) !important; }
+{{PRIM_P}} { color:var(--dourado) !important; }
+{{PRIM_H}} { background:#55306f !important; }
+.st-key-menu button { width:3rem; padding:0; }
+.st-key-menu button p { font-size:1.3rem; line-height:1; }
+.st-key-voltar button { border:none; background:transparent; height:auto; justify-content:flex-start; padding:.3rem 0; }
 
-/* botões redondos: voltar, menu e fechar */
-.st-key-voltar button, .st-key-menu button, .st-key-fechar button { width:62px !important; height:62px; border-radius:50%; padding:0; }
-.st-key-voltar button, .st-key-fechar button { background:var(--dourado); }
-.st-key-menu button { background:var(--roxo); }
-.st-key-voltar button p, .st-key-fechar button p { color:var(--roxo); font-size:2rem; line-height:1; }
-.st-key-menu button p { color:var(--dourado); font-size:2rem; line-height:1; }
-.st-key-voltar button:hover, .st-key-fechar button:hover { background:#d9be8e; }
-.st-key-fechar { display:flex; justify-content:flex-end; }
+/* abas */
+[data-baseweb="tab-list"] { gap:1.4rem; }
+button[data-baseweb="tab"] { padding:.6rem 0; height:auto; background:transparent; }
+button[data-baseweb="tab"] p { font-weight:600; color:var(--mudo); font-size:.95rem; }
+button[data-baseweb="tab"][aria-selected="true"] p { color:var(--roxo); }
+[data-baseweb="tab-highlight"] { background:var(--roxo); height:3px; }
+[data-baseweb="tab-border"] { background:var(--borda); }
 
-/* menu lateral (aberto pelo botão de menu; os controles nativos ficam escondidos) */
+/* tabela */
+.tabela-wrap { overflow:auto; max-height:520px; background:#fff; border:1px solid var(--borda); border-radius:12px; margin:.8rem 0 1rem; box-shadow:0 1px 3px rgba(66,32,90,.05); }
+.tabela { width:100%; border-collapse:separate; border-spacing:0; font-size:.88rem; }
+.tabela th { position:sticky; top:0; z-index:1; background:var(--roxo); color:var(--dourado); text-align:left; font-weight:600; padding:.8rem 1.1rem; white-space:nowrap; }
+.tabela td { padding:.7rem 1.1rem; border-bottom:1px solid rgba(201,208,218,.5); color:var(--texto); }
+.tabela tbody tr:nth-child(even) td { background:var(--fundo); }
+.tabela tbody tr:hover td { background:rgba(216,195,238,.35); }
+.tabela tbody tr:last-child td { border-bottom:none; }
+.tabela .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.nota { color:var(--mudo); font-size:.82rem; margin:-.4rem 0 .8rem; }
+
+/* painel de marca (login e cadastro) */
+.painel { background:var(--roxo); border-radius:20px; padding:2.6rem 2.4rem; min-height:640px; display:flex; flex-direction:column; justify-content:center; gap:1.7rem; }
+.painel-logo { background:var(--fundo); border-radius:14px; border-bottom:4px solid var(--dourado); padding:1.2rem 1.5rem; max-width:340px; text-align:center; }
+.painel-t { font-family:'Cinzel',serif; font-weight:700; font-size:1.8rem; line-height:1.3; color:#fff; }
+.painel-p { color:var(--lilas); font-size:1rem; line-height:1.7; max-width:38ch; }
+.painel-i { color:#fff; font-size:.95rem; padding-left:1.4rem; position:relative; margin:.55rem 0; }
+.painel-i::before { content:""; position:absolute; left:0; top:.6em; width:.55rem; height:.55rem; border-radius:50%; background:var(--dourado); }
+.logo { max-width:100%; height:auto; display:block; margin:0 auto; }
+.logo-txt { font-family:'Cinzel',serif; font-weight:800; font-size:1.6rem; color:var(--roxo); }
+.form-topo { padding-top:3.2rem; }
+
+/* topo e perfil */
+.usuario { display:flex; align-items:center; justify-content:flex-end; gap:.7rem; color:var(--roxo); font-weight:500; font-size:.92rem; }
+.avatar { width:2.4rem; height:2.4rem; border-radius:50%; background:var(--roxo); color:var(--dourado); display:inline-flex; align-items:center; justify-content:center; font-family:'Cinzel',serif; font-weight:700; }
+.perfil { background:#fff; border:1px solid var(--borda); border-radius:16px; padding:2rem 1.6rem; text-align:center; margin-bottom:1rem; box-shadow:0 1px 3px rgba(66,32,90,.05), 0 8px 24px rgba(66,32,90,.05); }
+.perfil img { width:96px; height:96px; }
+.perfil-nome { font-family:'Cinzel',serif; font-weight:700; font-size:1.4rem; color:var(--roxo); margin-top:.8rem; }
+.perfil-user { color:var(--mudo); font-size:.9rem; }
+.perfil-stat { margin-top:1.3rem; padding-top:1.1rem; border-top:1px solid var(--borda); color:var(--texto); font-size:.92rem; }
+.perfil-stat b { color:var(--roxo); font-size:1.3rem; display:block; }
+
+/* menu lateral: aberto pelo botão de menu; os controles nativos ficam escondidos */
 [data-testid="stSidebarCollapseButton"], [data-testid="stSidebarCollapsedControl"],
 [data-testid="stExpandSidebarButton"], [data-testid="collapsedControl"], [data-testid="stSidebarHeader"] { display:none !important; }
-section[data-testid="stSidebar"] { background:var(--roxo); width:340px !important; min-width:340px !important; max-width:340px !important; }
-[data-testid="stSidebar"] .stButton button { background:transparent; height:auto; padding:.5rem 0; border-radius:8px; }
-[data-testid="stSidebar"] .stButton button p { color:var(--lilas); font-size:1.25rem; text-align:center; }
-[data-testid="stSidebar"] .stButton button:hover { background:rgba(255,255,255,.1); }
-[data-testid="stSidebar"] .st-key-fechar button { background:var(--dourado); height:62px; padding:0; }
-[data-testid="stSidebar"] .st-key-fechar button:hover { background:#d9be8e; }
-[data-testid="stSidebar"] .st-key-fechar button p { color:var(--roxo); font-size:2rem; }
-[data-testid="stSidebar"] .st-key-perfil button p, [data-testid="stSidebar"] .st-key-sair button p { color:var(--dourado); }
-.side-titulo { font-family:'Cinzel',serif; font-weight:700; font-size:1.3rem; color:var(--dourado); text-align:center; margin:1rem 0; }
-.side-vazio { color:var(--lilas); text-align:center; font-family:'Poppins',sans-serif; font-size:.9rem; }
-.side-linha { border:0; border-top:2px solid var(--dourado); margin:1.2rem 1rem; opacity:1; }
+section[data-testid="stSidebar"] { background:#fff; border-right:1px solid var(--borda); width:300px !important; min-width:300px !important; max-width:300px !important; }
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding-top:1.5rem; }
+[data-testid="stSidebar"] .stButton button[kind="secondary"], [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] { border:none; background:transparent; height:auto; padding:.6rem .8rem; justify-content:flex-start; }
+[data-testid="stSidebar"] .stButton button[kind="secondary"] p, [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] p { font-weight:500; text-align:left; }
+[data-testid="stSidebar"] .stButton button[kind="secondary"]:hover, [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]:hover { background:rgba(216,195,238,.45); }
+.side-logo { padding:0 .3rem 1.2rem; border-bottom:1px solid var(--borda); margin-bottom:1.2rem; }
+.side-titulo { color:var(--mudo); font-size:.82rem; font-weight:600; padding:0 .8rem; margin:1.4rem 0 .3rem; }
+.side-vazio { color:var(--mudo); font-size:.88rem; padding:0 .8rem; }
+.side-linha { border:0; border-top:1px solid var(--borda); margin:1.2rem 0 .8rem; }
+
+@media (max-width: 800px) { .painel { min-height:auto; } .form-topo { padding-top:1rem; } }
 </style>"""
+CSS = (
+    CSS.replace("{{PRIM}}", ",".join(PRIM))
+    .replace("{{PRIM_P}}", ",".join(s + " p" for s in PRIM))
+    .replace("{{PRIM_H}}", ",".join(s + ":hover" for s in PRIM))
+)
 
 
-# ---------- banco de dados (SQLite local) ----------
+# ---------------------------------------------------------------- banco de dados (SQLite local)
 @contextmanager
 def conexao():
     con = sqlite3.connect(DB)
@@ -158,23 +212,27 @@ def trocar_senha(usuario, senha):
         con.execute("UPDATE usuarios SET salt=?, hash=? WHERE usuario=?", (salt, gerar_hash(senha, salt), usuario))
 
 
-def salvar_pergunta(usuario, pergunta, saida):
+def salvar_pergunta(usuario, pergunta, resposta, linhas, quando):
     with conexao() as con:
         con.execute(
-            "INSERT INTO perguntas (usuario, pergunta, resposta, linhas, sql, criada_em) VALUES (?,?,?,?,?,?)",
-            (usuario, pergunta, saida.get("resposta"), json.dumps(saida.get("linhas", []), ensure_ascii=False),
-             saida.get("sql"), datetime.now().isoformat(timespec="seconds")),
+            "INSERT INTO perguntas (usuario, pergunta, resposta, linhas, criada_em) VALUES (?,?,?,?,?)",
+            (usuario, pergunta, resposta, json.dumps(linhas, ensure_ascii=False), quando),
         )
 
 
-def listar_perguntas(usuario, limite=15):
+def listar_perguntas(usuario, limite=RECENTES):
     with conexao() as con:
         return con.execute(
             "SELECT id, pergunta FROM perguntas WHERE usuario=? ORDER BY id DESC LIMIT ?", (usuario, limite)
         ).fetchall()
 
 
-# ---------- chamada à state machine ----------
+def total_perguntas(usuario):
+    with conexao() as con:
+        return con.execute("SELECT COUNT(*) FROM perguntas WHERE usuario=?", (usuario,)).fetchone()[0]
+
+
+# ---------------------------------------------------------------- chamada à state machine
 @st.cache_resource
 def cliente_sfn():
     # No Streamlit Cloud as credenciais vêm de "Secrets"; no computador, do `aws configure`.
@@ -200,14 +258,191 @@ def consultar(pergunta):
     return json.loads(r["output"])
 
 
-# ---------- navegação e estado ----------
+def erro_amigavel(e):
+    t = str(e).lower()
+    if "credentials" in t:
+        return "As credenciais da AWS não estão configuradas. Adicione-as em Settings → Secrets do app."
+    if "accessdenied" in t or "not authorized" in t:
+        return "A conta da AWS não tem permissão para executar esta consulta."
+    return "Não foi possível concluir a consulta. Tente novamente em instantes."
+
+
+# ---------------------------------------------------------------- tabela e gráfico a partir dos dados
+HINT_ID = re.compile(r"(^|_)(id|cod|codigo|código|gtin|ean|cnpj|cpf|cep|fone|telefone|sku|ncm)(_|$)", re.I)
+HINT_ORDEM = re.compile(r"^(ano|year|mes|mês|month|dia|semana|trimestre)$", re.I)
+
+
+def esc(texto):
+    """Escapa HTML e o '$' (que o markdown do Streamlit trataria como fórmula)."""
+    return html.escape(str(texto)).replace("$", "&#36;")
+
+
+def rotulo_col(c):
+    s = str(c).replace("_", " ").strip()
+    return s[:1].upper() + s[1:]
+
+
+def numerica(s):
+    """A coluna convertida em número, ou None se ela não for numérica (ou for um código)."""
+    if s.dtype == bool or s.dropna().empty:
+        return None
+    if s.dtype == object or str(s.dtype).startswith("str"):
+        if s.dropna().astype(str).str.match(r"^0\d").any():   # "007": código, não quantidade
+            return None
+    n = pd.to_numeric(s, errors="coerce")
+    return n if n.notna().sum() >= 0.95 * s.notna().sum() else None
+
+
+def colunas_numericas(df):
+    out = {}
+    for c in df.columns:
+        if HINT_ID.search(str(c)):
+            continue
+        n = numerica(df[c])
+        if n is None:
+            continue
+        v = n.dropna()
+        if (v % 1 == 0).all() and v.min() >= 1e11:           # GTIN, CNPJ etc.
+            continue
+        out[c] = n
+    return out
+
+
+def como_data(s):
+    txt = s.astype(str)
+    try:
+        if txt.str.match(r"^\d{4}-\d{2}(-\d{2})?").all():
+            d = pd.to_datetime(txt, errors="coerce", format="mixed")
+        elif txt.str.match(r"^\d{2}/\d{2}/\d{4}").all():
+            d = pd.to_datetime(txt, errors="coerce", dayfirst=True, format="mixed")
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return d if d.notna().all() else None
+
+
+def analisar(df):
+    """Diz se a resposta pede um gráfico. Devolve None se não fizer sentido.
+
+    Regras: 2 a 60 linhas; uma coluna de categorias/período sem repetição e sem vazios;
+    pelo menos uma coluna de números (códigos como GTIN ficam de fora). Categorias em
+    texto: até 30 itens, para o gráfico continuar legível.
+    """
+    if df.empty or not (2 <= len(df) <= 60):
+        return None
+    nums = colunas_numericas(df)
+    dim = tipo = serie = None
+    for c in df.columns:
+        s = df[c]
+        if s.isna().any() or not s.is_unique:
+            continue
+        if c in nums:
+            if HINT_ORDEM.match(str(c)):
+                dim, tipo, serie = c, "ordem", nums[c]
+                break
+            continue
+        data = como_data(s)
+        if data is not None:
+            dim, tipo, serie = c, "tempo", data
+            break
+        if dim is None and not HINT_ID.search(str(c)):
+            dim, tipo, serie = c, "cat", s.astype(str)       # candidata; um período vale mais
+    if dim is None:
+        return None
+    if tipo == "cat" and len(df) > 30:
+        return None
+    medidas = [c for c in nums if c != dim]
+    if not medidas:
+        return None
+    base = pd.DataFrame({dim: serie})
+    for m in medidas:
+        base[m] = nums[m]
+    return {"dim": dim, "tipo": tipo, "medidas": medidas, "df": base}
+
+
+def fmt_num(x, inteiro):
+    if x is None or x != x:
+        return "—"
+    s = f"{int(round(x)):,}" if inteiro else f"{x:,.2f}"
+    return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def tabela_html(df):
+    nums = colunas_numericas(df)
+    inteiros = {c for c, n in nums.items() if (n.dropna() % 1 == 0).all()}
+    recorte = df.head(MAX_LINHAS)
+    colunas = []
+    for c in df.columns:
+        if c in nums:
+            colunas.append([fmt_num(x, c in inteiros) for x in nums[c].head(MAX_LINHAS)])
+        else:
+            colunas.append(["—" if (x is None or x == "" or (isinstance(x, float) and x != x)) else str(x)
+                            for x in recorte[c]])
+    cab = "".join(f"<th class='{'num' if c in nums else ''}'>{esc(rotulo_col(c))}</th>" for c in df.columns)
+    corpo = "".join(
+        "<tr>" + "".join(
+            f"<td class='{'num' if c in nums else ''}'>{esc(v)}</td>" for c, v in zip(df.columns, linha)
+        ) + "</tr>"
+        for linha in zip(*colunas)
+    )
+    return f"<div class='tabela-wrap'><table class='tabela'><thead><tr>{cab}</tr></thead><tbody>{corpo}</tbody></table></div>"
+
+
+def grafico(info):
+    base, dim, tipo = info["df"], info["dim"], info["tipo"]
+    medidas = info["medidas"]
+    c1, c2 = st.columns([3, 2])
+    medida = c1.selectbox("Valor exibido", medidas, format_func=rotulo_col) if len(medidas) > 1 else medidas[0]
+    formas = ["Linhas", "Barras"] if tipo in ("tempo", "ordem") else ["Barras"]
+    forma = c2.radio("Tipo de gráfico", formas, horizontal=True) if len(formas) > 1 else formas[0]
+
+    d = pd.DataFrame({"cat": base[dim], "val": base[medida]})
+    if tipo == "cat":
+        d = d.sort_values("val", ascending=False)
+    else:
+        d = d.sort_values("cat")
+    t_cat, t_val = rotulo_col(dim), rotulo_col(medida)
+    if tipo == "tempo":
+        so_mes = (d["cat"].dt.day == 1).all()
+        d["rot"] = d["cat"].dt.strftime("%m/%Y" if so_mes else "%d/%m/%Y")
+    else:
+        d["rot"] = d["cat"].astype(str)
+    tip = [alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
+    eixo_y = alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6, domain=False, ticks=False)
+
+    if forma == "Linhas":
+        x = alt.X("cat:T", title=None, axis=alt.Axis(grid=False, labelAngle=0, format="%m/%Y" if so_mes else "%d/%m")) \
+            if tipo == "tempo" else alt.X("rot:O", title=None, axis=alt.Axis(grid=False, labelAngle=0))
+        graf = alt.Chart(d).mark_line(
+            color=ROXO, strokeWidth=2.5, point=alt.OverlayMarkDef(color=DOURADO, stroke=ROXO, filled=True, size=70)
+        ).encode(x=x, y=alt.Y("val:Q", title=t_val, axis=eixo_y), tooltip=tip).properties(height=360)
+    elif tipo == "cat" and (len(d) > 8 or d["rot"].str.len().max() > 16):
+        graf = alt.Chart(d).mark_bar(color=ROXO, cornerRadiusEnd=4, size=18).encode(
+            y=alt.Y("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelLimit=280, domain=False, ticks=False)),
+            x=alt.X("val:Q", title=t_val, axis=alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6, domain=False, ticks=False)),
+            tooltip=tip,
+        ).properties(height=max(220, 32 * len(d)))
+    else:
+        graf = alt.Chart(d).mark_bar(color=ROXO, cornerRadiusEnd=4).encode(
+            x=alt.X("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelAngle=0, labelLimit=140, grid=False, domain=False, ticks=False)),
+            y=alt.Y("val:Q", title=t_val, axis=eixo_y),
+            tooltip=tip,
+        ).properties(height=360)
+
+    graf = graf.configure(font="Poppins", background="transparent").configure_view(stroke=None).configure_axis(
+        labelColor="#5E4A70", titleColor=ROXO, labelFontSize=12, titleFontSize=12, titleFontWeight=600
+    )
+    st.altair_chart(graf, theme=None, **ESTICAR_ALT)
+
+
+# ---------------------------------------------------------------- navegação e estado
 def ir(pagina):
     st.session_state.pagina = pagina
-    st.session_state.menu_aberto = False
 
 
 def alternar_menu():
-    st.session_state.menu_aberto = not st.session_state.get("menu_aberto", False)
+    st.session_state.menu_aberto = not st.session_state.get("menu_aberto", True)
 
 
 def sair():
@@ -216,25 +451,38 @@ def sair():
     ir("login")
 
 
+def nova_consulta():
+    st.session_state.resultado = None
+    st.session_state.consulta_pergunta = ""
+    ir("consulta")
+
+
 def abrir_pergunta(id_):
     with conexao() as con:
-        p = con.execute(
-            "SELECT * FROM perguntas WHERE id=? AND usuario=?", (id_, st.session_state.usuario)
-        ).fetchone()
+        p = con.execute("SELECT * FROM perguntas WHERE id=? AND usuario=?", (id_, st.session_state.usuario)).fetchone()
     if p:
         st.session_state.resultado = {
             "pergunta": p["pergunta"], "resposta": p["resposta"],
-            "linhas": json.loads(p["linhas"] or "[]"), "sql": p["sql"],
+            "linhas": json.loads(p["linhas"] or "[]"), "quando": p["criada_em"],
         }
+        ir("consulta")
 
 
-# ---------- componentes visuais ----------
-def titulo(texto):
-    st.markdown(f"<div class='titulo'>{texto}</div>", unsafe_allow_html=True)
+# ---------------------------------------------------------------- componentes visuais
+@lru_cache(maxsize=None)
+def img_b64(caminho):
+    return base64.b64encode(Path(caminho).read_bytes()).decode()
 
 
-def rotulo(texto):
-    st.markdown(f"<div class='rotulo'>{texto}</div>", unsafe_allow_html=True)
+def logo_html(largura=240):
+    if LOGO.exists():
+        return (f"<img class='logo' alt='Farmazids Medicina Oriental' style='width:{largura}px' "
+                f"src='data:image/png;base64,{img_b64(LOGO)}'>")
+    return "<div class='logo-txt'>FARMAZIDS</div>"
+
+
+def titulo(texto, subtitulo=""):
+    st.markdown(f"<div class='h1'>{esc(texto)}</div><div class='mudo'>{esc(subtitulo)}</div>", unsafe_allow_html=True)
 
 
 def aviso():
@@ -243,68 +491,79 @@ def aviso():
         getattr(st, msg[0])(msg[1])
 
 
-@lru_cache(maxsize=None)
-def img_b64(caminho):
-    return base64.b64encode(Path(caminho).read_bytes()).decode()
+def painel_marca():
+    st.markdown(
+        f"<div class='painel'><div class='painel-logo'>{logo_html(300)}</div>"
+        "<div class='painel-t'>Consulta inteligente aos dados da Farmazids</div>"
+        "<div class='painel-p'>Pergunte em linguagem natural e receba a resposta, a tabela e, "
+        "quando fizer sentido, um gráfico.</div>"
+        "<div><div class='painel-i'>Perguntas em linguagem natural</div>"
+        "<div class='painel-i'>Tabelas prontas para baixar em CSV</div>"
+        "<div class='painel-i'>Gráficos gerados automaticamente</div>"
+        "<div class='painel-i'>Suas últimas consultas sempre à mão</div></div></div>",
+        unsafe_allow_html=True,
+    )
 
 
-def logo():
-    if LOGO.exists():
-        st.markdown(f"<div class='logo-img'><img src='data:image/png;base64,{img_b64(LOGO)}'></div>",
-                    unsafe_allow_html=True)
-    else:
-        st.markdown("<div class='logo-txt'><div class='logo-a'>FARMAZIDS</div>"
-                    "<div class='logo-b'>MEDICINA ORIENTAL</div></div>", unsafe_allow_html=True)
+def tela_dividida():
+    """Painel de marca à esquerda; devolve a coluna do formulário."""
+    esq, dir_ = st.columns([1, 1], gap="large")
+    with esq:
+        painel_marca()
+    return dir_
 
 
-def emblema(lado):
-    if EMBLEMA.exists():
-        st.markdown(f"<div class='emb emb-{lado}'><img src='data:image/png;base64,{img_b64(EMBLEMA)}'></div>",
-                    unsafe_allow_html=True)
-
-
-def cabecalho(esquerda="emblema", destino=None, linha=True):
-    c1, c2, c3 = st.columns([1, 4, 1], vertical_alignment="center")
+def topo():
+    aberto = st.session_state.get("menu_aberto", True)
+    c1, c2, c3 = st.columns([1, 4, 4], vertical_alignment="center")
     with c1:
-        if esquerda == "voltar":
-            st.button("←", key="voltar", on_click=ir, args=(destino,))
-        elif esquerda == "menu":
+        if not aberto:
             st.button("☰", key="menu", on_click=alternar_menu)
-        elif esquerda == "emblema":
-            emblema("esq")
     with c2:
-        logo()
+        if not aberto:
+            st.markdown(logo_html(210), unsafe_allow_html=True)
     with c3:
-        emblema("dir")
-    if linha:
-        st.markdown("<hr class='linha'>", unsafe_allow_html=True)
+        nome = st.session_state.nome
+        st.markdown(f"<div class='usuario'>{esc(nome)}<span class='avatar'>{esc(nome[:1].upper())}</span></div>",
+                    unsafe_allow_html=True)
 
 
-# ---------- páginas ----------
+def menu_lateral():
+    """Só é chamado com o menu aberto; sem chamada, o Streamlit não desenha a barra lateral."""
+    with st.sidebar:
+        st.markdown(f"<div class='side-logo'>{logo_html(220)}</div>", unsafe_allow_html=True)
+        st.button("Nova consulta", key="nova", type="primary", on_click=nova_consulta, **ESTICAR)
+        st.markdown("<div class='side-titulo'>Consultas recentes</div>", unsafe_allow_html=True)
+        perguntas = listar_perguntas(st.session_state.usuario)
+        if not perguntas:
+            st.markdown("<div class='side-vazio'>Suas perguntas aparecerão aqui.</div>", unsafe_allow_html=True)
+        for p in perguntas:
+            texto = p["pergunta"] if len(p["pergunta"]) <= 30 else p["pergunta"][:29] + "…"
+            st.button(texto, key=f"hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), **ESTICAR)
+        st.markdown("<hr class='side-linha'>", unsafe_allow_html=True)
+        st.button("Perfil", key="perfil", on_click=ir, args=("perfil",), **ESTICAR)
+        st.button("Sair", key="sair", on_click=sair, **ESTICAR)
+        st.button("Ocultar menu", key="ocultar", on_click=alternar_menu, **ESTICAR)
+
+
+# ---------------------------------------------------------------- páginas
 def pagina_login():
-    cabecalho("emblema")
-    titulo("ENTRAR")
-    aviso()
-    with st.form("form_login", border=False):
-        rotulo("NOME DE USUÁRIO")
-        usuario = st.text_input("usuario", key="login_usuario", placeholder="Digite seu nome de usuário",
-                                label_visibility="collapsed")
-        rotulo("SENHA")
-        senha = st.text_input("senha", key="login_senha", type="password", placeholder="Digite sua senha",
-                              label_visibility="collapsed")
-        st.markdown("<div class='nao-cadastrou'>Não se cadastrou?</div>", unsafe_allow_html=True)
-        c1, _, c2 = st.columns([5, 2, 5])
-        entrar = c1.form_submit_button("ENTRAR", **ESTICAR_FORM)
-        cadastrar = c2.form_submit_button("CADASTRAR", **ESTICAR_FORM)
+    with tela_dividida():
+        st.markdown("<div class='form-topo'></div>", unsafe_allow_html=True)
+        titulo("Bem-vindo de volta", "Entre com seu usuário e senha para consultar os dados.")
+        aviso()
+        with st.form("form_login", border=False):
+            usuario = st.text_input("Usuário", key="login_usuario", placeholder="Digite seu usuário")
+            senha = st.text_input("Senha", key="login_senha", type="password", placeholder="Digite sua senha")
+            entrar = st.form_submit_button("Entrar", type="primary", **ESTICAR_FORM)
+        st.markdown("<div class='troca'>Ainda não tem conta?</div>", unsafe_allow_html=True)
+        st.button("Criar conta", key="b_criar", on_click=ir, args=("cadastro",), **ESTICAR)
 
-    if cadastrar:
-        ir("cadastro")
-        st.rerun()
     if entrar:
         usuario = usuario.strip().lower()
         nome = autenticar(usuario, senha)
         if nome:
-            st.session_state.update(usuario=usuario, nome=nome, resultado=None)
+            st.session_state.update(usuario=usuario, nome=nome, resultado=None, menu_aberto=True)
             ir("consulta")
             st.rerun()
         else:
@@ -312,143 +571,159 @@ def pagina_login():
 
 
 def pagina_cadastro():
-    cabecalho("voltar", destino="login")
-    titulo("CADASTRAR")
-    with st.form("form_cadastro", border=False):
-        rotulo("NOME")
-        nome = st.text_input("nome", key="cad_nome", placeholder="Digite seu nome", label_visibility="collapsed")
-        rotulo("NOME DE USUÁRIO")
-        usuario = st.text_input("usuario", key="cad_usuario", placeholder="Escolha um nome de usuário",
-                                label_visibility="collapsed")
-        rotulo("SENHA")
-        senha = st.text_input("senha", key="cad_senha", type="password", placeholder="Mínimo de 6 caracteres",
-                              label_visibility="collapsed")
-        rotulo("CONFIRMAR SENHA")
-        conf = st.text_input("confirmar", key="cad_conf", type="password", placeholder="Confirme sua senha",
-                             label_visibility="collapsed")
-        st.write("")
-        ok = st.columns([1, 2, 1])[1].form_submit_button("CADASTRAR", **ESTICAR_FORM)
+    with tela_dividida():
+        st.markdown("<div class='form-topo'></div>", unsafe_allow_html=True)
+        st.button("← Voltar ao login", key="voltar", on_click=ir, args=("login",))
+        titulo("Criar conta", "Preencha os dados abaixo para acessar o sistema.")
+        with st.form("form_cadastro", border=False):
+            nome = st.text_input("Nome completo", key="cad_nome", placeholder="Digite seu nome")
+            usuario = st.text_input("Usuário", key="cad_usuario", placeholder="Escolha um nome de usuário")
+            c1, c2 = st.columns(2)
+            senha = c1.text_input("Senha", key="cad_senha", type="password", placeholder="Mínimo de 6 caracteres")
+            conf = c2.text_input("Confirmar senha", key="cad_conf", type="password", placeholder="Repita a senha")
+            ok = st.form_submit_button("Criar conta", type="primary", **ESTICAR_FORM)
 
     if ok:
         usuario = usuario.strip().lower()
         if not (nome.strip() and usuario and senha):
             st.error("Preencha todos os campos.")
         elif not USUARIO_OK.match(usuario):
-            st.error("Usuário: 3 a 30 caracteres, só letras, números, ponto, hífen ou _.")
+            st.error("O usuário deve ter de 3 a 30 caracteres, só com letras, números, ponto, hífen ou _.")
         elif len(senha) < 6:
             st.error("A senha precisa ter pelo menos 6 caracteres.")
         elif senha != conf:
             st.error("As senhas não conferem.")
         elif not criar_usuario(nome.strip(), usuario, senha):
-            st.error("Esse nome de usuário já existe.")
+            st.error("Esse nome de usuário já existe. Escolha outro.")
         else:
-            st.session_state.aviso = ("success", "Cadastro realizado! Faça login.")
+            st.session_state.aviso = ("success", "Conta criada. Entre com seu usuário e senha.")
             ir("login")
             st.rerun()
 
 
-def menu_lateral():
-    """Só é chamado com o menu aberto; sem chamada, o Streamlit não desenha a barra lateral."""
-    with st.sidebar:
-        st.button("←", key="fechar", on_click=alternar_menu)
-        st.markdown("<div class='side-titulo'>Perguntas Anteriores</div>", unsafe_allow_html=True)
-        perguntas = listar_perguntas(st.session_state.usuario)
-        if not perguntas:
-            st.markdown("<div class='side-vazio'>Nenhuma pergunta ainda.</div>", unsafe_allow_html=True)
-        for p in perguntas:
-            texto = p["pergunta"] if len(p["pergunta"]) <= 28 else p["pergunta"][:27] + "…"
-            st.button(texto, key=f"hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), **ESTICAR)
-        st.markdown("<hr class='side-linha'>", unsafe_allow_html=True)
-        st.button("Perfil", key="perfil", on_click=ir, args=("perfil",), **ESTICAR)
-        st.markdown("<hr class='side-linha'>", unsafe_allow_html=True)
-        st.button("Sair", key="sair", on_click=sair, **ESTICAR)
-
-
 def mostrar_resultado(res):
-    st.markdown("<hr class='linha'>", unsafe_allow_html=True)
-    st.markdown("<div class='sub'>PERGUNTA</div>", unsafe_allow_html=True)
-    st.write(res["pergunta"])
-    st.markdown("<div class='sub'>RESPOSTA</div>", unsafe_allow_html=True)
-    st.write(res["resposta"])
-    if res["linhas"]:
-        st.markdown("<div class='sub'>TABELA</div>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(res["linhas"]))
-    if res["sql"]:
-        st.markdown("<div class='sub'>SQL</div>", unsafe_allow_html=True)
-        st.code(res["sql"], language="sql")
+    linhas = res.get("linhas") or []
+    df = pd.DataFrame(linhas) if linhas else pd.DataFrame()
+
+    st.markdown(f"<div class='pergunta'>{esc(res['pergunta'])}</div>", unsafe_allow_html=True)
+    chips = []
+    if not df.empty:
+        n = len(df)
+        chips.append(f"{n:,} registro{'s' if n != 1 else ''}".replace(",", "."))
+        chips.append(f"{len(df.columns)} coluna{'s' if len(df.columns) != 1 else ''}")
+    try:
+        chips.append(datetime.fromisoformat(res["quando"]).strftime("%d/%m/%Y %H:%M"))
+    except (KeyError, ValueError, TypeError):
+        pass
+    st.markdown("".join(f"<span class='chip'>{esc(c)}</span>" for c in chips), unsafe_allow_html=True)
+
+    if res.get("resposta"):
+        texto = esc(res["resposta"]).replace("\r", "").replace("\n", "<br>")
+        texto = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", texto)
+        st.markdown(f"<div class='rot'>Resposta</div><div class='resposta'>{texto}</div>", unsafe_allow_html=True)
+
+    if df.empty:
+        return
+    st.markdown("<div class='rot'>Dados</div>", unsafe_allow_html=True)
+    info = analisar(df)
+    if info:
+        aba_tabela, aba_grafico = st.tabs(["Tabela", "Gráfico"])
+    else:
+        aba_tabela, aba_grafico = st.container(), None
+
+    with aba_tabela:
+        st.markdown(tabela_html(df), unsafe_allow_html=True)
+        if len(df) > MAX_LINHAS:
+            st.markdown(f"<div class='nota'>Exibindo {MAX_LINHAS} de {len(df)} linhas. Baixe o CSV para ver todas.</div>",
+                        unsafe_allow_html=True)
+        st.download_button("Baixar CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                           file_name="consulta.csv", mime="text/csv")
+    if aba_grafico is not None:
+        with aba_grafico:
+            try:
+                grafico(info)
+            except Exception:
+                st.info("Não foi possível montar o gráfico para estes dados. A tabela mostra o resultado completo.")
 
 
 def pagina_consulta():
-    aberto = st.session_state.get("menu_aberto", False)
-    if aberto:
-        menu_lateral()
-    cabecalho("nenhum" if aberto else "menu", linha=False)
-    titulo("Consulta aos dados")
-    with st.form("form_consulta", border=False):
-        pergunta = st.text_input("pergunta", key="consulta_pergunta", placeholder="Qual a sua pergunta?",
-                                 label_visibility="collapsed")
-        enviar = st.columns([1, 1, 1])[1].form_submit_button("PERGUNTAR", **ESTICAR_FORM)
+    topo()
+    titulo("Consulta aos dados", "Faça uma pergunta em linguagem natural sobre os dados da Farmazids.")
+    with st.form("form_consulta", border=True):
+        c1, c2 = st.columns([5, 1.3], vertical_alignment="bottom")
+        pergunta = c1.text_input("Sua pergunta", key="consulta_pergunta", placeholder="Digite sua pergunta sobre os dados")
+        enviar = c2.form_submit_button("Perguntar", type="primary", **ESTICAR_FORM)
 
-    if enviar and pergunta.strip():
+    if enviar:
         pergunta = pergunta.strip()
-        try:
-            with st.spinner("Consultando..."):
-                saida = consultar(pergunta)
-            salvar_pergunta(st.session_state.usuario, pergunta, saida)
-            st.session_state.resultado = {
-                "pergunta": pergunta, "resposta": saida.get("resposta"),
-                "linhas": saida.get("linhas", []), "sql": saida.get("sql"),
-            }
-            st.rerun()  # atualiza a lista de perguntas anteriores no menu
-        except Exception as e:
-            st.error(f"Não foi possível consultar: {e}")
+        if not pergunta:
+            st.warning("Digite uma pergunta para consultar.")
+        else:
+            try:
+                with st.spinner("Analisando os dados..."):
+                    saida = consultar(pergunta)
+            except Exception as e:
+                st.error(erro_amigavel(e))
+                with st.expander("Detalhes técnicos"):
+                    st.code(str(e))
+            else:
+                quando = datetime.now().isoformat(timespec="seconds")
+                resposta, linhas = saida.get("resposta"), saida.get("linhas") or []
+                salvar_pergunta(st.session_state.usuario, pergunta, resposta, linhas, quando)
+                st.session_state.resultado = {"pergunta": pergunta, "resposta": resposta, "linhas": linhas, "quando": quando}
+                st.rerun()  # atualiza as consultas recentes no menu
 
     if st.session_state.get("resultado"):
         mostrar_resultado(st.session_state.resultado)
     else:
-        st.markdown("<hr class='linha'>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='vazio'><div class='h2'>Faça sua primeira pergunta</div>"
+            "<div class='dica'>Seja específico: diga o que quer saber e sobre qual produto, categoria ou período.</div>"
+            "<div class='dica'>Peça rankings, comparações ou evolução ao longo do tempo para receber também um gráfico.</div>"
+            "<div class='dica'>Suas três consultas mais recentes ficam no menu, para reabrir quando quiser.</div></div>",
+            unsafe_allow_html=True,
+        )
 
 
 def pagina_perfil():
-    cabecalho("voltar", destino="consulta")
-    titulo("SEU PERFIL")
+    topo()
+    titulo("Perfil", "Seus dados de acesso e segurança da conta.")
     aviso()
-    rotulo("Nome:")
-    st.markdown(f"<div class='campo-nome'>{html.escape(st.session_state.nome)}</div>", unsafe_allow_html=True)
-    c1, _, c2 = st.columns([5, 1, 5])
-    c1.button("REDEFINIR SENHA", key="b_redefinir", on_click=ir, args=("senha",), **ESTICAR)
-    c2.button("SAIR", key="b_sair", on_click=sair, **ESTICAR)
+    esq, dir_ = st.columns([2, 3], gap="large")
+    with esq:
+        emb = (f"<img alt='Farmazids' src='data:image/png;base64,{img_b64(EMBLEMA)}'>" if EMBLEMA.exists() else "")
+        total = total_perguntas(st.session_state.usuario)
+        st.markdown(
+            f"<div class='perfil'>{emb}<div class='perfil-nome'>{esc(st.session_state.nome)}</div>"
+            f"<div class='perfil-user'>@{esc(st.session_state.usuario)}</div>"
+            f"<div class='perfil-stat'><b>{total}</b>consulta{'s' if total != 1 else ''} realizada{'s' if total != 1 else ''}</div></div>",
+            unsafe_allow_html=True,
+        )
+        st.button("Sair da conta", key="b_sair", on_click=sair, **ESTICAR)
+    with dir_:
+        with st.form("form_senha", border=True):
+            st.markdown("<div class='h2'>Redefinir senha</div><div class='mudo' style='margin-top:.2rem'>"
+                        "Informe a senha atual e escolha uma nova.</div>", unsafe_allow_html=True)
+            atual = st.text_input("Senha atual", key="senha_atual", type="password", placeholder="Digite sua senha atual")
+            c1, c2 = st.columns(2)
+            nova = c1.text_input("Nova senha", key="nova_senha", type="password", placeholder="Mínimo de 6 caracteres")
+            conf = c2.text_input("Confirmar nova senha", key="nova_conf", type="password", placeholder="Repita a nova senha")
+            ok = st.form_submit_button("Salvar nova senha", type="primary", **ESTICAR_FORM)
+
+        if ok:
+            if not autenticar(st.session_state.usuario, atual):
+                st.error("A senha atual está incorreta.")
+            elif len(nova) < 6:
+                st.error("A nova senha precisa ter pelo menos 6 caracteres.")
+            elif nova != conf:
+                st.error("As senhas novas não conferem.")
+            else:
+                trocar_senha(st.session_state.usuario, nova)
+                st.session_state.aviso = ("success", "Senha alterada com sucesso.")
+                st.rerun()
 
 
-def pagina_senha():
-    cabecalho("voltar", destino="perfil")
-    titulo("REDEFINIR SENHA")
-    with st.form("form_senha", border=False):
-        rotulo("NOVA SENHA")
-        nova = st.text_input("nova", key="nova_senha", type="password", placeholder="Digite sua nova senha",
-                             label_visibility="collapsed")
-        rotulo("CONFIRMAR SENHA")
-        conf = st.text_input("confirmar", key="nova_conf", type="password", placeholder="Confirme sua nova senha",
-                             label_visibility="collapsed")
-        st.write("")
-        ok = st.columns([1, 2, 1])[1].form_submit_button("REDEFINIR SENHA", **ESTICAR_FORM)
-
-    if ok:
-        if len(nova) < 6:
-            st.error("A senha precisa ter pelo menos 6 caracteres.")
-        elif nova != conf:
-            st.error("As senhas não conferem.")
-        else:
-            trocar_senha(st.session_state.usuario, nova)
-            st.session_state.aviso = ("success", "Senha redefinida com sucesso.")
-            ir("perfil")
-            st.rerun()
-
-
-PAGINAS = {
-    "login": pagina_login, "cadastro": pagina_cadastro, "consulta": pagina_consulta,
-    "perfil": pagina_perfil, "senha": pagina_senha,
-}
+PAGINAS = {"login": pagina_login, "cadastro": pagina_cadastro, "consulta": pagina_consulta, "perfil": pagina_perfil}
 
 
 def main():
@@ -457,8 +732,11 @@ def main():
     iniciar_db()
     st.markdown(CSS, unsafe_allow_html=True)
     st.session_state.setdefault("pagina", "login")
+    st.session_state.setdefault("menu_aberto", True)
     if "usuario" not in st.session_state and st.session_state.pagina not in ("login", "cadastro"):
         ir("login")
+    if st.session_state.pagina in ("consulta", "perfil") and st.session_state.get("menu_aberto"):
+        menu_lateral()
     PAGINAS[st.session_state.pagina]()
 
 
