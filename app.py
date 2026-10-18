@@ -67,7 +67,10 @@ CSS = """<style>
 .rot { color:var(--mudo); font-size:.82rem; font-weight:600; margin:1.6rem 0 .45rem; }
 .pergunta { font-family:'Cinzel',serif; font-weight:700; font-size:1.35rem; line-height:1.35; color:var(--roxo); margin:1.8rem 0 .6rem; }
 .chip { display:inline-block; background:rgba(216,195,238,.5); color:var(--roxo); border-radius:999px; padding:.2rem .85rem; font-size:.8rem; font-weight:500; margin:0 .4rem .3rem 0; }
-.resposta { background:#fff; border:1px solid var(--borda); border-left:4px solid var(--dourado); border-radius:12px; padding:1.15rem 1.4rem; line-height:1.7; font-size:1rem; box-shadow:0 1px 3px rgba(66,32,90,.05); }
+.st-key-resposta { background:#fff; border:1px solid var(--borda); border-left:4px solid var(--dourado); border-radius:12px; padding:1.1rem 1.4rem; box-shadow:0 1px 3px rgba(66,32,90,.05); }
+.st-key-resposta p, .st-key-resposta li { line-height:1.7; font-size:1rem; }
+.st-key-resposta h1, .st-key-resposta h2, .st-key-resposta h3, .st-key-resposta h4 { font-family:'Cinzel',serif; font-size:1.05rem; color:var(--roxo); margin:.2rem 0 .5rem; padding:0; }
+.st-key-resposta pre { background:var(--fundo); border-radius:8px; }
 .vazio { background:#fff; border:1px dashed var(--cinza); border-radius:16px; padding:2rem 2.2rem; margin-top:1.6rem; }
 .vazio .h2 { margin-bottom:.6rem; }
 .dica { color:var(--texto); font-size:.95rem; line-height:1.6; padding-left:1.3rem; position:relative; margin:.5rem 0; }
@@ -282,6 +285,17 @@ def rotulo_col(c):
     return s[:1].upper() + s[1:]
 
 
+BLOCOS = re.compile(r"[█▓▒░▇▆▅▄▃▂▁■]")
+GRAFICO_TEXTO = re.compile(r"(?:^[ \t]*[#*\s]*Gr[áa]fico[^\n]*\n+)?^[ \t]*```[^\n]*\n(.*?)^[ \t]*```[ \t]*\n?", re.M | re.S)
+
+
+def limpar_resposta(texto):
+    """Tira da resposta o que o app já mostra melhor: o título "Resposta" e gráficos feitos de texto (█)."""
+    texto = GRAFICO_TEXTO.sub(lambda m: "" if BLOCOS.search(m.group(1)) else m.group(0), str(texto))
+    texto = re.sub(r"^\s*#{1,6}\s*Resposta\s*:?\s*\n", "", texto, flags=re.I)
+    return texto.replace("$", "\\$").strip()    # "$" viraria fórmula no markdown
+
+
 def numerica(s):
     """A coluna convertida em número, ou None se ela não for numérica (ou for um código)."""
     if s.dtype == bool or s.dropna().empty:
@@ -322,43 +336,55 @@ def como_data(s):
     return d if d.notna().all() else None
 
 
+ADITIVA = re.compile(r"(quant|qtd|total|venda|valor|unidade|receita|faturamento|soma)", re.I)
+
+
+def _dimensao(c, s, ja_numerica):
+    """Como a coluna serve de eixo: 'tempo', 'ordem' (ano, mês...) ou 'cat'; None se não serve."""
+    if ja_numerica:
+        return ("ordem", s) if HINT_ORDEM.match(str(c)) else (None, None)
+    data = como_data(s)
+    if data is not None:
+        return "tempo", data
+    if HINT_ID.search(str(c)):
+        return None, None
+    return "cat", s.astype(str)
+
+
 def analisar(df):
     """Diz se a resposta pede um gráfico. Devolve None se não fizer sentido.
 
-    Regras: 2 a 60 linhas; uma coluna de categorias/período sem repetição e sem vazios;
-    pelo menos uma coluna de números (códigos como GTIN ficam de fora). Categorias em
-    texto: até 30 itens, para o gráfico continuar legível.
+    Para cada par (coluna de categorias ou período, coluna de números) usa só as linhas em que os
+    dois existem, o que cobre respostas "mistas" (uma linha de resumo + várias de histórico).
+    Se a categoria se repete, soma os valores, mas só de medidas que se somam (quantidade, total,
+    valor...). Exige de 2 a 60 pontos (até 30 para categorias em texto). Códigos como GTIN não entram.
     """
-    if df.empty or not (2 <= len(df) <= 60):
+    if len(df) < 2:
         return None
     nums = colunas_numericas(df)
-    dim = tipo = serie = None
     for c in df.columns:
-        s = df[c]
-        if s.isna().any() or not s.is_unique:
-            continue
-        if c in nums:
-            if HINT_ORDEM.match(str(c)):
-                dim, tipo, serie = c, "ordem", nums[c]
-                break
-            continue
-        data = como_data(s)
-        if data is not None:
-            dim, tipo, serie = c, "tempo", data
-            break
-        if dim is None and not HINT_ID.search(str(c)):
-            dim, tipo, serie = c, "cat", s.astype(str)       # candidata; um período vale mais
-    if dim is None:
-        return None
-    if tipo == "cat" and len(df) > 30:
-        return None
-    medidas = [c for c in nums if c != dim]
-    if not medidas:
-        return None
-    base = pd.DataFrame({dim: serie})
-    for m in medidas:
-        base[m] = nums[m]
-    return {"dim": dim, "tipo": tipo, "medidas": medidas, "df": base}
+        series = {}
+        for m in nums:
+            if m == c:
+                continue
+            sub = pd.DataFrame({"cat": nums[c] if c in nums else df[c], "val": nums[m]}).dropna()
+            if len(sub) < 2:
+                continue
+            tipo, cat = _dimensao(c, sub["cat"], c in nums)
+            if tipo is None:
+                continue
+            sub["cat"] = cat
+            agregado = not sub["cat"].is_unique
+            if agregado:
+                if not ADITIVA.search(str(m)):
+                    continue
+                sub = sub.groupby("cat", as_index=False, sort=False)["val"].sum()
+            if not (2 <= len(sub) <= 60) or (tipo == "cat" and len(sub) > 30):
+                continue
+            series[m] = {"df": sub, "tipo": tipo, "agregado": agregado}
+        if series:
+            return {"dim": c, "series": series}
+    return None
 
 
 def fmt_num(x, inteiro):
@@ -390,14 +416,16 @@ def tabela_html(df):
 
 
 def grafico(info):
-    base, dim, tipo = info["df"], info["dim"], info["tipo"]
-    medidas = info["medidas"]
+    dim, series = info["dim"], info["series"]
+    medidas = list(series)
     c1, c2 = st.columns([3, 2])
     medida = c1.selectbox("Valor exibido", medidas, format_func=rotulo_col) if len(medidas) > 1 else medidas[0]
+    d, tipo = series[medida]["df"].copy(), series[medida]["tipo"]
     formas = ["Linhas", "Barras"] if tipo in ("tempo", "ordem") else ["Barras"]
     forma = c2.radio("Tipo de gráfico", formas, horizontal=True) if len(formas) > 1 else formas[0]
+    if series[medida]["agregado"]:
+        st.markdown(f"<div class='nota'>Valores somados por {esc(rotulo_col(dim).lower())}.</div>", unsafe_allow_html=True)
 
-    d = pd.DataFrame({"cat": base[dim], "val": base[medida]})
     if tipo == "cat":
         d = d.sort_values("val", ascending=False)
     else:
@@ -618,9 +646,13 @@ def mostrar_resultado(res):
     st.markdown("".join(f"<span class='chip'>{esc(c)}</span>" for c in chips), unsafe_allow_html=True)
 
     if res.get("resposta"):
-        texto = esc(res["resposta"]).replace("\r", "").replace("\n", "<br>")
-        texto = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", texto)
-        st.markdown(f"<div class='rot'>Resposta</div><div class='resposta'>{texto}</div>", unsafe_allow_html=True)
+        st.markdown("<div class='rot'>Resposta</div>", unsafe_allow_html=True)
+        try:
+            caixa = st.container(key="resposta")
+        except TypeError:                      # Streamlit antigo, sem "key" em container
+            caixa = st.container(border=True)
+        with caixa:
+            st.markdown(limpar_resposta(res["resposta"]))
 
     if df.empty:
         return
