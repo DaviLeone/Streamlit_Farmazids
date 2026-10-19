@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv()  # Carrega as variáveis do ficheiro .env para o sistema
 
 import altair as alt
 import boto3
