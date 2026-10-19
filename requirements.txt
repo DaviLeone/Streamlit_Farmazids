@@ -2,3 +2,4 @@ streamlit>=1.46
 boto3
 pandas
 altair
+python-dotenv
