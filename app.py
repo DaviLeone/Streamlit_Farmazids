@@ -117,6 +117,8 @@ button[data-baseweb="tab"][aria-selected="true"] p { color:var(--roxo); }
 .tabela tbody tr:last-child td { border-bottom:none; }
 .tabela .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .nota { color:var(--mudo); font-size:.82rem; margin:-.4rem 0 .8rem; }
+.legenda { background:rgba(216,195,238,.28); border-left:3px solid var(--dourado); border-radius:8px; padding:.8rem 1.1rem; margin:.4rem 0 1rem; color:var(--texto); font-size:.93rem; line-height:1.65; }
+.legenda b { color:var(--roxo); }
 
 /* painel de marca (login e cadastro) */
 .painel { background:var(--roxo); border-radius:20px; padding:2.6rem 2.4rem; min-height:640px; display:flex; flex-direction:column; justify-content:center; gap:1.7rem; }
@@ -325,15 +327,12 @@ def colunas_numericas(df):
 
 
 def como_data(s):
-    txt = s.astype(str)
-    try:
-        if txt.str.match(r"^\d{4}-\d{2}(-\d{2})?").all():
-            d = pd.to_datetime(txt, errors="coerce", format="mixed")
-        elif txt.str.match(r"^\d{2}/\d{2}/\d{4}").all():
-            d = pd.to_datetime(txt, errors="coerce", dayfirst=True, format="mixed")
-        else:
-            return None
-    except (TypeError, ValueError):
+    txt = s.astype(str).str.strip()
+    if txt.str.match(r"^\d{4}-\d{2}(-\d{2})?").all():
+        d = pd.to_datetime(txt.str[:10], errors="coerce")          # sem format="mixed"
+    elif txt.str.match(r"^\d{2}/\d{2}/\d{4}").all():
+        d = pd.to_datetime(txt, errors="coerce", dayfirst=True)
+    else:
         return None
     return d if d.notna().all() else None
 
@@ -416,6 +415,39 @@ def tabela_html(df):
     )
     return f"<div class='tabela-wrap'><table class='tabela'><thead><tr>{cab}</tr></thead><tbody>{corpo}</tbody></table></div>"
 
+def legenda_grafico(d, tipo, dim, medida):
+    """Texto 'este gráfico representa...' montado a partir dos dados exibidos."""
+    inteiro = (d["val"] % 1 == 0).all()
+    f = lambda x: fmt_num(x, inteiro)
+    nome = rotulo_col(medida).lower()
+    n = len(d)
+    maior = d.loc[d["val"].idxmax()]
+    menor = d.loc[d["val"].idxmin()]
+    media = d["val"].mean()
+    b = lambda x: f"<b>{esc(x)}</b>"
+
+    if tipo in ("tempo", "ordem"):
+        ini, fim = d.iloc[0], d.iloc[-1]
+        txt = f"Este gráfico mostra a evolução de {b(nome)} em {n} períodos, de {b(ini['rot'])} a {b(fim['rot'])}. "
+        txt += f"O maior valor foi em {b(maior['rot'])} ({f(maior['val'])}) e o menor em {b(menor['rot'])} ({f(menor['val'])}). "
+        if ini["val"]:
+            var = (fim["val"] - ini["val"]) / abs(ini["val"]) * 100
+            if abs(var) < 3:
+                txt += "No conjunto, o comportamento é estável"
+            else:
+                txt += f"Do primeiro ao último período, houve {'alta' if var > 0 else 'queda'} de {abs(var):.1f}%".replace(".", ",")
+            txt += f", com média de {f(media)} por período."
+        else:
+            txt += f"A média foi de {f(media)} por período."
+    else:
+        ordem = d.sort_values("val", ascending=False)
+        txt = (f"Este gráfico compara {b(nome)} entre {n} {esc(rotulo_col(dim).lower())}s. "
+               f"{b(maior['rot'])} lidera com {f(maior['val'])}, e {b(menor['rot'])} aparece por último com {f(menor['val'])}. ")
+        if ADITIVA.search(str(medida)) and d["val"].sum() > 0:
+            share = ordem["val"].head(3).sum() / d["val"].sum() * 100
+            if n > 3:
+                txt += f"Os 3 primeiros concentram {share:.0f}% do total.".replace(".", ",")
+    return f"<div class='legenda'>{txt}</div>"
 
 def grafico(info):
     dim, series = info["dim"], info["series"]
@@ -464,6 +496,7 @@ def grafico(info):
         labelColor="#5E4A70", titleColor=ROXO, labelFontSize=12, titleFontSize=12, titleFontWeight=600
     )
     st.altair_chart(graf, theme=None, **ESTICAR_ALT)
+    st.markdown(legenda_grafico(d, tipo, dim, medida), unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------- navegação e estado
@@ -636,48 +669,25 @@ def mostrar_resultado(res):
     df = pd.DataFrame(linhas) if linhas else pd.DataFrame()
 
     st.markdown(f"<div class='pergunta'>{esc(res['pergunta'])}</div>", unsafe_allow_html=True)
-    chips = []
-    if not df.empty:
-        n = len(df)
-        chips.append(f"{n:,} registro{'s' if n != 1 else ''}".replace(",", "."))
-        chips.append(f"{len(df.columns)} coluna{'s' if len(df.columns) != 1 else ''}")
-    try:
-        chips.append(datetime.fromisoformat(res["quando"]).strftime("%d/%m/%Y %H:%M"))
-    except (KeyError, ValueError, TypeError):
-        pass
-    st.markdown("".join(f"<span class='chip'>{esc(c)}</span>" for c in chips), unsafe_allow_html=True)
-
-    if res.get("resposta"):
-        st.markdown("<div class='rot'>Resposta</div>", unsafe_allow_html=True)
-        try:
-            caixa = st.container(key="resposta")
-        except TypeError:                      # Streamlit antigo, sem "key" em container
-            caixa = st.container(border=True)
-        with caixa:
-            st.markdown(limpar_resposta(res["resposta"]))
-
-    if df.empty:
-        return
-    st.markdown("<div class='rot'>Dados</div>", unsafe_allow_html=True)
     info = analisar(df)
     if info:
-        aba_tabela, aba_grafico = st.tabs(["Tabela", "Gráfico"])
+        st.markdown("<div class='rot'>Gráfico</div>", unsafe_allow_html=True)
+        try:
+            grafico(info)
+        except Exception as e:
+            st.warning("Não foi possível montar o gráfico.")
+            st.exception(e)          # temporário: mostra o erro real
     else:
-        aba_tabela, aba_grafico = st.container(), None
+        with st.expander("Por que não há gráfico? (diagnóstico)"):
+            st.write(df.dtypes.astype(str))   # temporário
 
-    with aba_tabela:
-        st.markdown(tabela_html(df), unsafe_allow_html=True)
-        if len(df) > MAX_LINHAS:
-            st.markdown(f"<div class='nota'>Exibindo {MAX_LINHAS} de {len(df)} linhas. Baixe o CSV para ver todas.</div>",
-                        unsafe_allow_html=True)
-        st.download_button("Baixar CSV", df.to_csv(index=False).encode("utf-8-sig"),
-                           file_name="consulta.csv", mime="text/csv")
-    if aba_grafico is not None:
-        with aba_grafico:
-            try:
-                grafico(info)
-            except Exception:
-                st.info("Não foi possível montar o gráfico para estes dados. A tabela mostra o resultado completo.")
+    st.markdown("<div class='rot'>Tabela</div>", unsafe_allow_html=True)
+    st.markdown(tabela_html(df), unsafe_allow_html=True)
+    if len(df) > MAX_LINHAS:
+        st.markdown(f"<div class='nota'>Exibindo {MAX_LINHAS} de {len(df)} linhas. Baixe o CSV para ver todas.</div>",
+                    unsafe_allow_html=True)
+    st.download_button("Baixar CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                       file_name="consulta.csv", mime="text/csv")
 
 
 def pagina_consulta():
