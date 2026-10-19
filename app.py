@@ -81,11 +81,54 @@ CSS = """<style>
 
 /* campos */
 [data-testid="stWidgetLabel"] p { color:var(--roxo); font-size:.85rem; font-weight:500; }
-div[data-baseweb="input"] { background:#fff; border:1.5px solid var(--cinza) !important; border-radius:12px; box-shadow:none; }
+div[data-baseweb="input"], div[data-baseweb="base-input"] { background:#fff !important; }
+div[data-baseweb="input"] { background:#fff !important; border:1.5px solid var( --cinza) !important; border-radius:12px; box-shadow:none; }
 div[data-baseweb="input"]:focus-within { border-color:var(--roxo) !important; box-shadow:0 0 0 3px rgba(216,195,238,.7); }
-div[data-baseweb="base-input"] { background:transparent; }
-[data-testid="stTextInput"] input { height:3rem; font-size:.98rem; color:var(--texto); padding-left:1rem; }
-[data-testid="stTextInput"] input::placeholder { color:#8a8f98; }
+[data-testid="stTextInput"] input {
+    height:3rem; font-size:.98rem; padding-left:1rem;
+    background:#fff !important;
+    color:#2B2B2B !important;
+    -webkit-text-fill-color:#2B2B2B !important;
+    caret-color:#42205A;
+}
+[data-testid="stTextInput"] input::placeholder { color:#8a8f98 !important; -webkit-text-fill-color:#8a8f98 !important; opacity:1; }
+[data-testid="stTextInput"] input:-webkit-autofill,
+[data-testid="stTextInput"] input:-webkit-autofill:hover,
+[data-testid="stTextInput"] input:-webkit-autofill:focus {
+    -webkit-box-shadow:0 0 0 1000px #fff inset !important;
+    -webkit-text-fill-color:#2B2B2B !important;
+    caret-color:#42205A;
+    transition:background-color 9999s ease-in-out 0s;
+}
+/* botão do olho (revelar senha): fundo branco, ícone roxo */
+[data-testid="stTextInputRootElement"] > div,
+[data-testid="stTextInputRootElement"] button {
+    background:#fff !important;
+    background-color:#fff !important;
+    border:none !important;
+    box-shadow:none !important;
+}
+[data-testid="stTextInputRootElement"] button { border-radius:0 12px 12px 0; }
+[data-testid="stTextInputRootElement"] button:hover { background:rgba(216,195,238,.35) !important; }
+[data-testid="stTextInputRootElement"] button,
+[data-testid="stTextInputRootElement"] button * {
+    color:#42205A !important;
+}
+/* contêiner do campo: branco, e botão do olho na altura toda */
+[data-testid="stTextInputRootElement"],
+[data-testid="stTextInputRootElement"] div[data-baseweb="base-input"] {
+    background:#fff !important;
+    background-color:#fff !important;
+}
+[data-testid="stTextInputRootElement"] > div {
+    align-self:stretch;
+    display:flex;
+    align-items:stretch;
+}
+[data-testid="stTextInputRootElement"] button {
+    height:100% !important;
+    min-height:0;
+}
 [data-testid="stForm"] { background:#fff; border:1px solid var(--borda); border-radius:16px; padding:1.4rem 1.5rem; box-shadow:0 1px 3px rgba(66,32,90,.05), 0 8px 24px rgba(66,32,90,.05); }
 
 /* botões: secundário (contorno) e primário (roxo) */
