@@ -491,7 +491,41 @@ def legenda_grafico(d, tipo, dim, medida):
             if n > 3:
                 txt += f"Os 3 primeiros concentram {share:.0f}% do total.".replace(".", ",")
     return f"<div class='legenda'>{txt}</div>"
-
+MESES_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+ 
+# Expressão Vega: troca 1,234.5 (en-US) por 1.234,5 (pt-BR) nos números do eixo.
+def _expr_br():
+    e = "format(datum.value, ',.2~f')"
+    for _ in range(3):                      # vírgulas de milhar -> '#' (até bilhões)
+        e = f"replace({e}, ',', '#')"
+    e = f"replace({e}, '.', ',')"           # ponto decimal -> vírgula
+    for _ in range(3):                      # '#' -> ponto de milhar
+        e = f"replace({e}, '#', '.')"
+    return e
+ 
+ 
+EXPR_BR = _expr_br()
+ 
+ 
+def rotulo_mes(ts):
+    """Timestamp -> 'out/25' (um rótulo por mês, em português)."""
+    return f"{MESES_PT[ts.month - 1]}/{str(ts.year)[2:]}"
+ 
+ 
+def resumo_dados(df, info):
+    """Linha de apoio: quantas linhas vieram e o período coberto (mesmo df do gráfico e da tabela)."""
+    n = len(df)
+    txt = f"{n} linha{'s' if n != 1 else ''} retornada{'s' if n != 1 else ''}"
+    if info:
+        s = next(iter(info["series"].values()))
+        cats = s["df"]["cat"].sort_values()
+        if s["tipo"] == "tempo":
+            so_mes = bool((cats.dt.day == 1).all())
+            f = rotulo_mes if so_mes else (lambda t: t.strftime("%d/%m/%Y"))
+            txt += f" · período de {f(cats.iloc[0])} a {f(cats.iloc[-1])}"
+        elif s["tipo"] == "ordem":
+            txt += f" · de {cats.iloc[0]} a {cats.iloc[-1]}"
+    return f"<div class='nota'>{esc(txt)}</div>"
 def grafico(info):
     dim, series = info["dim"], info["series"]
     medidas = list(series)
@@ -502,39 +536,50 @@ def grafico(info):
     forma = c2.radio("Tipo de gráfico", formas, horizontal=True) if len(formas) > 1 else formas[0]
     if series[medida]["agregado"]:
         st.markdown(f"<div class='nota'>Valores somados por {esc(rotulo_col(dim).lower())}.</div>", unsafe_allow_html=True)
-
-    if tipo == "cat":
-        d = d.sort_values("val", ascending=False)
-    else:
-        d = d.sort_values("cat")
+ 
+    d = d.sort_values("val", ascending=False) if tipo == "cat" else d.sort_values("cat")
     t_cat, t_val = rotulo_col(dim), rotulo_col(medida)
+ 
+    # --- FIX 1: um rótulo por mês, em texto (ex.: out/25), em vez de eixo temporal contínuo ---
+    so_mes = False
     if tipo == "tempo":
-        so_mes = (d["cat"].dt.day == 1).all()
-        d["rot"] = d["cat"].dt.strftime("%m/%Y" if so_mes else "%d/%m/%Y")
+        so_mes = bool((d["cat"].dt.day == 1).all())
+        d["rot"] = d["cat"].map(rotulo_mes) if so_mes else d["cat"].dt.strftime("%d/%m/%Y")
     else:
         d["rot"] = d["cat"].astype(str)
-    tip = [alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
-    eixo_y = alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6, domain=False, ticks=False)
-
+ 
+    # --- FIX 4: tooltip já formatado em pt-BR (o Vega formataria em en-US) ---
+    inteiro = bool((d["val"] % 1 == 0).all())
+    d["val_fmt"] = d["val"].map(lambda v: fmt_num(v, inteiro))
+    tip = [alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val_fmt:N", title=t_val)]
+ 
+    # --- FIX 4: números do eixo em pt-BR via labelExpr ---
+    eixo_y = alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6, domain=False, ticks=False, labelExpr=EXPR_BR)
+ 
     if forma == "Linhas":
-        x = alt.X("cat:T", title=None, axis=alt.Axis(grid=False, labelAngle=0, format="%m/%Y" if so_mes else "%d/%m")) \
-            if tipo == "tempo" else alt.X("rot:O", title=None, axis=alt.Axis(grid=False, labelAngle=0))
+        if tipo == "tempo" and not so_mes:      # datas diárias: eixo temporal, sem rótulos sobrepostos
+            x = alt.X("cat:T", title=None, axis=alt.Axis(grid=False, labelAngle=0, format="%d/%m", labelOverlap=True))
+        else:                                   # meses / anos / ordem: um tick por ponto
+            x = alt.X("rot:O", sort=list(d["rot"]), title=None,
+                      axis=alt.Axis(grid=False, labelAngle=0, labelOverlap=True))
         graf = alt.Chart(d).mark_line(
             color=ROXO, strokeWidth=2.5, point=alt.OverlayMarkDef(color=DOURADO, stroke=ROXO, filled=True, size=70)
         ).encode(x=x, y=alt.Y("val:Q", title=t_val, axis=eixo_y), tooltip=tip).properties(height=360)
     elif tipo == "cat" and (len(d) > 8 or d["rot"].str.len().max() > 16):
         graf = alt.Chart(d).mark_bar(color=ROXO, cornerRadiusEnd=4, size=18).encode(
             y=alt.Y("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelLimit=280, domain=False, ticks=False)),
-            x=alt.X("val:Q", title=t_val, axis=alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6, domain=False, ticks=False)),
+            x=alt.X("val:Q", title=t_val, axis=alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6,
+                                                         domain=False, ticks=False, labelExpr=EXPR_BR)),
             tooltip=tip,
         ).properties(height=max(220, 32 * len(d)))
     else:
         graf = alt.Chart(d).mark_bar(color=ROXO, cornerRadiusEnd=4).encode(
-            x=alt.X("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelAngle=0, labelLimit=140, grid=False, domain=False, ticks=False)),
+            x=alt.X("rot:N", sort=list(d["rot"]), title=None,
+                    axis=alt.Axis(labelAngle=0, labelLimit=140, grid=False, domain=False, ticks=False)),
             y=alt.Y("val:Q", title=t_val, axis=eixo_y),
             tooltip=tip,
         ).properties(height=360)
-
+ 
     graf = graf.configure(font="Poppins", background="transparent").configure_view(stroke=None).configure_axis(
         labelColor="#5E4A70", titleColor=ROXO, labelFontSize=12, titleFontSize=12, titleFontWeight=600
     )
@@ -713,6 +758,9 @@ def mostrar_resultado(res):
 
     st.markdown(f"<div class='pergunta'>{esc(res['pergunta'])}</div>", unsafe_allow_html=True)
     info = analisar(df)
+    with st.expander("Dados brutos (diagnóstico)"):
+        st.dataframe(df)
+    st.markdown(resumo_dados(df, info), unsafe_allow_html=True)
     if info:
         st.markdown("<div class='rot'>Gráfico</div>", unsafe_allow_html=True)
         try:
