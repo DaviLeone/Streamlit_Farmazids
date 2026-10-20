@@ -2,6 +2,7 @@ import base64
 import hashlib
 import html
 import inspect
+import io
 import json
 import re
 import secrets
@@ -11,32 +12,37 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()  # Carrega as variáveis do ficheiro .env para o sistema
+
+load_dotenv()
 
 import altair as alt
 import boto3
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-# --- AJUSTE AQUI ---
+# --- CONFIGURAÇÕES AWS ---
 STATE_MACHINE_ARN = "arn:aws:states:us-east-2:906513713169:stateMachine:farmazids-t1-equipe-06-bedrockV2"
 REGIAO = "us-east-2"
-# -------------------
+# -------------------------
 
-BASE = Path(__file__).parent
+# --- CONFIGURAÇÃO DE CAMINHOS RELATIVOS ---
+BASE = Path(__file__).resolve().parent
 DB = BASE / "farmazids.db"
-LOGO = BASE / "logo.png"          # logo "FARMAZIDS MEDICINA ORIENTAL" (original, sem alterações)
-EMBLEMA = BASE / "emblema.png"    # emblema redondo (original, sem alterações)
-USUARIO_OK = re.compile(r"^[a-z0-9_.-]{3,30}$")
-RECENTES = 3          # quantas consultas aparecem em "Consultas recentes"
-MAX_LINHAS = 200      # linhas exibidas na tabela da tela (o CSV leva todas)
+LOGO = BASE / "logo.png"          # Logo retangular
+EMBLEMA = BASE / "emblema.png"    # Emblema redondo
 
-# Paleta do projeto
+USUARIO_OK = re.compile(r"^[a-z0-9_.-]{3,30}$")
+RECENTES_LIMIT = 5    # Limite máximo de conversas no menu lateral
+MAX_LINHAS = 200      # Linhas exibidas na tabela da tela
+
+# Paleta de Cores Farmazids
 ROXO, DOURADO, CINZA, FUNDO, LILAS = "#42205A", "#C9AD7A", "#C9D0DA", "#FBF9F4", "#D8C3EE"
 
 
 def _esticar(fn):
-    """Largura total do componente, em qualquer versão do Streamlit."""
     return {"width": "stretch"} if "width" in inspect.signature(fn).parameters else {"use_container_width": True}
 
 
@@ -44,116 +50,155 @@ ESTICAR = _esticar(st.button)
 ESTICAR_FORM = _esticar(st.form_submit_button)
 ESTICAR_ALT = _esticar(st.altair_chart)
 
-# ---------------------------------------------------------------- estilo
+# ---------------------------------------------------------------- ESTILO CSS
 PRIM = [
     '.stButton button[kind="primary"]',
     '[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"]',
     '[data-testid="stBaseButton-primary"]',
     '[data-testid="stBaseButton-primaryFormSubmit"]',
 ]
+
 CSS = """<style>
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800&family=Poppins:wght@400;500;600&display=swap');
-:root { --roxo:#42205A; --dourado:#C9AD7A; --cinza:#C9D0DA; --fundo:#FBF9F4; --lilas:#D8C3EE;
-        --texto:#2B2B2B; --mudo:rgba(66,32,90,.66); --borda:rgba(201,208,218,.85); }
-.stApp { background:var(--fundo); color:var(--texto); }
+
+:root { 
+    --roxo:#42205A; 
+    --dourado:#C9AD7A; 
+    --cinza:#C9D0DA; 
+    --fundo:#FBF9F4; 
+    --lilas:#D8C3EE;
+    --texto:#2B2B2B; 
+    --mudo:rgba(66,32,90,.66); 
+    --borda:rgba(201,208,218,.85); 
+}
+
+.stApp { background-color:var(--fundo) !important; color:var(--texto) !important; }
 .stApp, .stApp p, .stApp label, .stApp input, .stApp button, .stApp li, .stApp td, .stApp th, .stApp textarea { font-family:'Poppins',sans-serif; }
 [data-testid="stToolbar"], [data-testid="stDecoration"], footer, [data-testid="InputInstructions"] { display:none !important; }
-[data-testid="stHeader"] { background:transparent; }
+[data-testid="stHeader"] { background:transparent !important; }
 .block-container { max-width:1180px; padding-top:2rem; padding-bottom:3rem; }
 
-/* tipografia */
-.h1 { font-family:'Cinzel',serif; font-weight:800; font-size:2rem; line-height:1.2; color:var(--roxo); margin:0; }
+.h1 { font-family:'Cinzel',serif; font-weight:800; font-size:2rem; line-height:1.2; color:var(--roxo) !important; margin:0; }
 .h1::after { content:""; display:block; width:44px; height:3px; border-radius:2px; background:var(--dourado); margin-top:.7rem; }
-.h2 { font-family:'Cinzel',serif; font-weight:700; font-size:1.25rem; color:var(--roxo); margin:0 0 .2rem; }
-.mudo { color:var(--mudo); font-size:.95rem; line-height:1.6; margin:.7rem 0 1.4rem; }
-.rot { color:var(--mudo); font-size:.82rem; font-weight:600; margin:1.6rem 0 .45rem; }
-.pergunta { font-family:'Cinzel',serif; font-weight:700; font-size:1.35rem; line-height:1.35; color:var(--roxo); margin:1.8rem 0 .6rem; }
-.chip { display:inline-block; background:rgba(216,195,238,.5); color:var(--roxo); border-radius:999px; padding:.2rem .85rem; font-size:.8rem; font-weight:500; margin:0 .4rem .3rem 0; }
-.st-key-resposta { background:#fff; border:1px solid var(--borda); border-left:4px solid var(--dourado); border-radius:12px; padding:1.1rem 1.4rem; box-shadow:0 1px 3px rgba(66,32,90,.05); }
-.st-key-resposta p, .st-key-resposta li { line-height:1.7; font-size:1rem; }
-.st-key-resposta h1, .st-key-resposta h2, .st-key-resposta h3, .st-key-resposta h4 { font-family:'Cinzel',serif; font-size:1.05rem; color:var(--roxo); margin:.2rem 0 .5rem; padding:0; }
-.st-key-resposta pre { background:var(--fundo); border-radius:8px; }
-.vazio { background:#fff; border:1px dashed var(--cinza); border-radius:16px; padding:2rem 2.2rem; margin-top:1.6rem; }
+.h2 { font-family:'Cinzel',serif; font-weight:700; font-size:1.25rem; color:var(--roxo) !important; margin:0 0 .2rem; }
+.mudo { color:var(--mudo) !important; font-size:.95rem; line-height:1.6; margin:.7rem 0 1.4rem; }
+.rot { color:var(--mudo) !important; font-size:.85rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; margin:1.6rem 0 .5rem; }
+.pergunta { font-family:'Cinzel',serif; font-weight:700; font-size:1.4rem; line-height:1.35; color:var(--roxo) !important; margin:1.2rem 0 .6rem; word-break:break-word; }
+.chip { display:inline-block; background:rgba(216,195,238,.5); color:var(--roxo) !important; border-radius:999px; padding:.2rem .85rem; font-size:.8rem; font-weight:500; margin:0 .4rem .6rem 0; }
+
+.st-key-resposta { background:#fff !important; border:1.5px solid var(--dourado) !important; border-left:6px solid var(--roxo) !important; border-radius:14px; padding:1.4rem 1.6rem; box-shadow:0 4px 12px rgba(66,32,90,.08); margin-bottom:1.2rem; }
+.st-key-resposta p, .st-key-resposta li { line-height:1.75; font-size:1.05rem; color:var(--texto) !important; }
+.st-key-resposta h1, .st-key-resposta h2, .st-key-resposta h3, .st-key-resposta h4 { font-family:'Cinzel',serif; font-size:1.15rem; color:var(--roxo) !important; margin:.3rem 0 .6rem; padding:0; }
+
+.bot-header { display:flex; align-items:center; gap:10px; margin-bottom:1rem; border-bottom:1px solid rgba(201,208,218,.5); padding-bottom:.6rem; }
+.bot-header img { width:30px; height:30px; border-radius:50%; }
+.bot-header .bot-nome { font-family:'Cinzel',serif; font-weight:700; font-size:1.1rem; color:var(--roxo) !important; }
+
+.vazio { background:#fff !important; border:1px dashed var(--cinza) !important; border-radius:16px; padding:2rem 2.2rem; margin-top:1.6rem; }
 .vazio .h2 { margin-bottom:.6rem; }
-.dica { color:var(--texto); font-size:.95rem; line-height:1.6; padding-left:1.3rem; position:relative; margin:.5rem 0; }
+.dica { color:var(--texto) !important; font-size:.95rem; line-height:1.6; padding-left:1.3rem; position:relative; margin:.5rem 0; }
 .dica::before { content:""; position:absolute; left:0; top:.62em; width:.5rem; height:.5rem; border-radius:50%; background:var(--dourado); }
-.troca { color:var(--mudo); font-size:.9rem; text-align:center; margin:1.2rem 0 .5rem; }
+.troca { color:var(--mudo) !important; font-size:.9rem; text-align:center; margin:1.2rem 0 .5rem; }
 
-/* campos */
-[data-testid="stWidgetLabel"] p { color:var(--roxo); font-size:.85rem; font-weight:500; }
-div[data-baseweb="input"] { background:#fff; border:1.5px solid var(--cinza) !important; border-radius:12px; box-shadow:none; }
+.hist-card { background:#fff !important; border:1px solid var(--borda) !important; border-radius:14px; padding:1.2rem 1.4rem; margin-bottom:1rem; box-shadow:0 2px 6px rgba(66,32,90,.04); }
+.hist-pergunta { font-family:'Cinzel',serif; font-weight:700; font-size:1.1rem; color:var(--roxo) !important; margin-bottom:.3rem; }
+.hist-data { font-size:.78rem; color:var(--mudo) !important; margin-bottom:.6rem; }
+.hist-resposta { font-size:.92rem; color:var(--texto) !important; line-height:1.5; background:var(--fundo); padding:.8rem 1rem; border-radius:8px; border-left:3px solid var(--dourado); }
+
+[data-testid="stWidgetLabel"] p { color:var(--roxo) !important; font-size:.85rem; font-weight:500; }
+div[data-baseweb="input"] { background:#ffffff !important; border:1.5px solid var(--cinza) !important; border-radius:12px !important; box-shadow:none; }
 div[data-baseweb="input"]:focus-within { border-color:var(--roxo) !important; box-shadow:0 0 0 3px rgba(216,195,238,.7); }
-div[data-baseweb="base-input"] { background:transparent; }
-[data-testid="stTextInput"] input { height:3rem; font-size:.98rem; color:var(--texto); padding-left:1rem; }
-[data-testid="stTextInput"] input::placeholder { color:#8a8f98; }
-[data-testid="stForm"] { background:#fff; border:1px solid var(--borda); border-radius:16px; padding:1.4rem 1.5rem; box-shadow:0 1px 3px rgba(66,32,90,.05), 0 8px 24px rgba(66,32,90,.05); }
+div[data-baseweb="base-input"] { background:transparent !important; }
+[data-testid="stTextInput"] input { background:#ffffff !important; height:3rem; font-size:.98rem; color:#2B2B2B !important; padding-left:1rem; }
+[data-testid="stTextInput"] input::placeholder { color:#8a8f98 !important; }
+[data-testid="stForm"] { background:#ffffff !important; border:1px solid var(--borda) !important; border-radius:16px; padding:1.4rem 1.5rem; box-shadow:0 1px 3px rgba(66,32,90,.05), 0 8px 24px rgba(66,32,90,.05); }
 
-/* botões: secundário (contorno) e primário (roxo) */
-.stButton button, [data-testid="stFormSubmitButton"] button, [data-testid="stDownloadButton"] button { border-radius:12px; height:3rem; border:1.5px solid var(--roxo); background:#fff; transition:background .15s; }
-.stButton button p, [data-testid="stFormSubmitButton"] button p, [data-testid="stDownloadButton"] button p { color:var(--roxo); font-weight:600; font-size:.95rem; }
-.stButton button:hover, [data-testid="stFormSubmitButton"] button:hover, [data-testid="stDownloadButton"] button:hover { background:rgba(216,195,238,.45); border-color:var(--roxo); }
+[data-testid="stExpander"] { display:none !important; }
+
+.stButton button, [data-testid="stFormSubmitButton"] button, [data-testid="stDownloadButton"] button { border-radius:12px; height:3rem; border:1.5px solid var(--roxo); background:#fff !important; transition:all .15s ease; }
+.stButton button p, [data-testid="stFormSubmitButton"] button p, [data-testid="stDownloadButton"] button p { color:var(--roxo) !important; font-weight:600; font-size:.95rem; }
+.stButton button:hover, [data-testid="stFormSubmitButton"] button:hover, [data-testid="stDownloadButton"] button:hover { background:rgba(216,195,238,.45) !important; border-color:var(--roxo); }
 {{PRIM}} { background:var(--roxo) !important; border-color:var(--roxo) !important; }
 {{PRIM_P}} { color:var(--dourado) !important; }
 {{PRIM_H}} { background:#55306f !important; }
-.st-key-menu button { width:3rem; padding:0; }
-.st-key-menu button p { font-size:1.3rem; line-height:1; }
-.st-key-voltar button { border:none; background:transparent; height:auto; justify-content:flex-start; padding:.3rem 0; }
 
-/* abas */
-[data-baseweb="tab-list"] { gap:1.4rem; }
-button[data-baseweb="tab"] { padding:.6rem 0; height:auto; background:transparent; }
-button[data-baseweb="tab"] p { font-weight:600; color:var(--mudo); font-size:.95rem; }
-button[data-baseweb="tab"][aria-selected="true"] p { color:var(--roxo); }
-[data-baseweb="tab-highlight"] { background:var(--roxo); height:3px; }
-[data-baseweb="tab-border"] { background:var(--borda); }
-
-/* tabela */
-.tabela-wrap { overflow:auto; max-height:520px; background:#fff; border:1px solid var(--borda); border-radius:12px; margin:.8rem 0 1rem; box-shadow:0 1px 3px rgba(66,32,90,.05); }
+.tabela-wrap { overflow:auto; max-height:520px; background:#fff !important; border:1px solid var(--borda); border-radius:12px; margin:.8rem 0 1rem; box-shadow:0 1px 3px rgba(66,32,90,.05); }
 .tabela { width:100%; border-collapse:separate; border-spacing:0; font-size:.88rem; }
-.tabela th { position:sticky; top:0; z-index:1; background:var(--roxo); color:var(--dourado); text-align:left; font-weight:600; padding:.8rem 1.1rem; white-space:nowrap; }
-.tabela td { padding:.7rem 1.1rem; border-bottom:1px solid rgba(201,208,218,.5); color:var(--texto); }
-.tabela tbody tr:nth-child(even) td { background:var(--fundo); }
-.tabela tbody tr:hover td { background:rgba(216,195,238,.35); }
+.tabela th { position:sticky; top:0; z-index:1; background:var(--roxo) !important; color:var(--dourado) !important; text-align:left; font-weight:600; padding:.8rem 1.1rem; white-space:nowrap; }
+.tabela td { padding:.7rem 1.1rem; border-bottom:1px solid rgba(201,208,218,.5); color:var(--texto) !important; }
+.tabela tbody tr:nth-child(even) td { background:var(--fundo) !important; }
+.tabela tbody tr:hover td { background:rgba(216,195,238,.35) !important; }
 .tabela tbody tr:last-child td { border-bottom:none; }
 .tabela .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
-.nota { color:var(--mudo); font-size:.82rem; margin:-.4rem 0 .8rem; }
 
-/* painel de marca (login e cadastro) */
-.painel { background:var(--roxo); border-radius:20px; padding:2.6rem 2.4rem; min-height:640px; display:flex; flex-direction:column; justify-content:center; gap:1.7rem; }
-.painel-logo { background:var(--fundo); border-radius:14px; border-bottom:4px solid var(--dourado); padding:1.2rem 1.5rem; max-width:340px; text-align:center; }
-.painel-t { font-family:'Cinzel',serif; font-weight:700; font-size:1.8rem; line-height:1.3; color:#fff; }
-.painel-p { color:var(--lilas); font-size:1rem; line-height:1.7; max-width:38ch; }
-.painel-i { color:#fff; font-size:.95rem; padding-left:1.4rem; position:relative; margin:.55rem 0; }
+.painel { background:var(--roxo) !important; border-radius:20px; padding:2.6rem 2.4rem; min-height:640px; display:flex; flex-direction:column; justify-content:center; gap:1.7rem; }
+.painel-logo { background:var(--fundo) !important; border-radius:14px; border-bottom:4px solid var(--dourado); padding:1.2rem 1.5rem; max-width:340px; text-align:center; margin:0 auto; }
+.painel-t { font-family:'Cinzel',serif; font-weight:700; font-size:1.8rem; line-height:1.3; color:#fff !important; }
+.painel-p { color:var(--lilas) !important; font-size:1rem; line-height:1.7; max-width:38ch; }
+.painel-i { color:#fff !important; font-size:.95rem; padding-left:1.4rem; position:relative; margin:.55rem 0; }
 .painel-i::before { content:""; position:absolute; left:0; top:.6em; width:.55rem; height:.55rem; border-radius:50%; background:var(--dourado); }
-.logo { max-width:100%; height:auto; display:block; margin:0 auto; }
-.logo-txt { font-family:'Cinzel',serif; font-weight:800; font-size:1.6rem; color:var(--roxo); }
-.form-topo { padding-top:3.2rem; }
 
-/* topo e perfil */
-.usuario { display:flex; align-items:center; justify-content:flex-end; gap:.7rem; color:var(--roxo); font-weight:500; font-size:.92rem; }
-.avatar { width:2.4rem; height:2.4rem; border-radius:50%; background:var(--roxo); color:var(--dourado); display:inline-flex; align-items:center; justify-content:center; font-family:'Cinzel',serif; font-weight:700; }
-.perfil { background:#fff; border:1px solid var(--borda); border-radius:16px; padding:2rem 1.6rem; text-align:center; margin-bottom:1rem; box-shadow:0 1px 3px rgba(66,32,90,.05), 0 8px 24px rgba(66,32,90,.05); }
-.perfil img { width:96px; height:96px; }
-.perfil-nome { font-family:'Cinzel',serif; font-weight:700; font-size:1.4rem; color:var(--roxo); margin-top:.8rem; }
-.perfil-user { color:var(--mudo); font-size:.9rem; }
-.perfil-stat { margin-top:1.3rem; padding-top:1.1rem; border-top:1px solid var(--borda); color:var(--texto); font-size:.92rem; }
-.perfil-stat b { color:var(--roxo); font-size:1.3rem; display:block; }
+.usuario { display:flex; align-items:center; justify-content:flex-end; gap:.7rem; color:var(--roxo) !important; font-weight:600; font-size:.95rem; }
+.avatar-img { width:2.5rem; height:2.5rem; border-radius:50%; object-fit:cover; border:2px solid var(--dourado); }
+.avatar-txt { width:2.5rem; height:2.5rem; border-radius:50%; background:var(--roxo) !important; color:var(--dourado) !important; display:inline-flex; align-items:center; justify-content:center; font-family:'Cinzel',serif; font-weight:700; font-size:1.1rem; }
 
-/* menu lateral: aberto pelo botão de menu; os controles nativos ficam escondidos */
+.perfil-card { background:#fff !important; border:1px solid var(--borda); border-radius:16px; padding:2rem 1.6rem; text-align:center; margin-bottom:1rem; box-shadow:0 1px 3px rgba(66,32,90,.05); }
+.perfil-avatar-lg { width:110px; height:110px; border-radius:50%; object-fit:cover; border:3px solid var(--dourado); margin:0 auto; display:block; }
+.perfil-nome { font-family:'Cinzel',serif; font-weight:700; font-size:1.4rem; color:var(--roxo) !important; margin-top:.8rem; }
+.perfil-user { color:var(--mudo) !important; font-size:.9rem; }
+.perfil-stat { margin-top:1.3rem; padding-top:1.1rem; border-top:1px solid var(--borda); color:var(--texto) !important; font-size:.92rem; }
+.perfil-stat b { color:var(--roxo) !important; font-size:1.4rem; display:block; }
+
 [data-testid="stSidebarCollapseButton"], [data-testid="stSidebarCollapsedControl"],
 [data-testid="stExpandSidebarButton"], [data-testid="collapsedControl"], [data-testid="stSidebarHeader"] { display:none !important; }
-section[data-testid="stSidebar"] { background:#fff; border-right:1px solid var(--borda); width:300px !important; min-width:300px !important; max-width:300px !important; }
-[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding-top:1.5rem; }
-[data-testid="stSidebar"] .stButton button[kind="secondary"], [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] { border:none; background:transparent; height:auto; padding:.6rem .8rem; justify-content:flex-start; }
-[data-testid="stSidebar"] .stButton button[kind="secondary"] p, [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] p { font-weight:500; text-align:left; }
-[data-testid="stSidebar"] .stButton button[kind="secondary"]:hover, [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]:hover { background:rgba(216,195,238,.45); }
-.side-logo { padding:0 .3rem 1.2rem; border-bottom:1px solid var(--borda); margin-bottom:1.2rem; }
-.side-titulo { color:var(--mudo); font-size:.82rem; font-weight:600; padding:0 .8rem; margin:1.4rem 0 .3rem; }
-.side-vazio { color:var(--mudo); font-size:.88rem; padding:0 .8rem; }
-.side-linha { border:0; border-top:1px solid var(--borda); margin:1.2rem 0 .8rem; }
+section[data-testid="stSidebar"] { background:#fff !important; border-right:1px solid var(--borda); width:310px !important; min-width:310px !important; }
+[data-testid="stSidebar"] .stButton button[kind="secondary"] { border:none; background:transparent !important; height:auto; padding:.65rem .8rem; justify-content:flex-start; text-align:left; border-radius:10px; }
+[data-testid="stSidebar"] .stButton button[kind="secondary"]:hover { background:rgba(216,195,238,.45) !important; }
 
-@media (max-width: 800px) { .painel { min-height:auto; } .form-topo { padding-top:1rem; } }
+/* Centralização do Container da Logo na Sidebar */
+.side-logo { 
+    display: flex; 
+    justify-content: center; 
+    align-items: center; 
+    text-align: center; 
+    padding: 0.5rem 0 1rem 0; 
+    border-bottom: 1px solid var(--borda); 
+    margin-bottom: 1rem; 
+}
+.side-logo img { 
+    margin: 0 auto !important; 
+    display: block !important; 
+}
+
+/* Botão Minimalista para Ocultar Menu */
+.btn-ocultar {
+    margin-top: 0.5rem;
+    text-align: center;
+}
+.btn-ocultar button {
+    border: none !important;
+    background: transparent !important;
+    color: var(--mudo) !important;
+    font-size: 0.85rem !important;
+    font-weight: 500 !important;
+    height: auto !important;
+    padding: 0.4rem 0.8rem !important;
+    box-shadow: none !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.4rem !important;
+}
+.btn-ocultar button:hover {
+    color: var(--roxo) !important;
+    background: rgba(216, 195, 238, 0.25) !important;
+    border-radius: 8px !important;
+}
+
+.side-titulo { color:var(--mudo) !important; font-size:.8rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:0 .8rem; margin:1.2rem 0 .4rem; }
+.side-linha { border:0; border-top:1px solid var(--borda); margin:1rem 0 .6rem; }
 </style>"""
+
 CSS = (
     CSS.replace("{{PRIM}}", ",".join(PRIM))
     .replace("{{PRIM_P}}", ",".join(s + " p" for s in PRIM))
@@ -161,7 +206,7 @@ CSS = (
 )
 
 
-# ---------------------------------------------------------------- banco de dados (SQLite local)
+# ---------------------------------------------------------------- BANCO DE DADOS (SQLITE)
 @contextmanager
 def conexao():
     con = sqlite3.connect(DB)
@@ -180,13 +225,17 @@ def iniciar_db():
             """
             CREATE TABLE IF NOT EXISTS usuarios (
                 usuario TEXT PRIMARY KEY, nome TEXT NOT NULL,
-                salt BLOB NOT NULL, hash BLOB NOT NULL);
+                salt BLOB NOT NULL, hash BLOB NOT NULL, foto TEXT);
             CREATE TABLE IF NOT EXISTS perguntas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT NOT NULL,
                 pergunta TEXT NOT NULL, resposta TEXT, linhas TEXT, sql TEXT,
                 criada_em TEXT NOT NULL);
             """
         )
+        try:
+            con.execute("ALTER TABLE usuarios ADD COLUMN foto TEXT")
+        except sqlite3.OperationalError:
+            pass
 
 
 def gerar_hash(senha, salt):
@@ -197,7 +246,8 @@ def criar_usuario(nome, usuario, senha):
     salt = secrets.token_bytes(16)
     try:
         with conexao() as con:
-            con.execute("INSERT INTO usuarios VALUES (?,?,?,?)", (usuario, nome, salt, gerar_hash(senha, salt)))
+            con.execute("INSERT INTO usuarios (usuario, nome, salt, hash, foto) VALUES (?,?,?,?,?)",
+                        (usuario, nome, salt, gerar_hash(senha, salt), None))
         return True
     except sqlite3.IntegrityError:
         return False
@@ -207,14 +257,29 @@ def autenticar(usuario, senha):
     with conexao() as con:
         u = con.execute("SELECT * FROM usuarios WHERE usuario=?", (usuario,)).fetchone()
     if u and secrets.compare_digest(gerar_hash(senha, u["salt"]), u["hash"]):
-        return u["nome"]
-    return None
+        return u["nome"], u["foto"] if "foto" in u.keys() else None
+    return None, None
 
 
 def trocar_senha(usuario, senha):
     salt = secrets.token_bytes(16)
     with conexao() as con:
         con.execute("UPDATE usuarios SET salt=?, hash=? WHERE usuario=?", (salt, gerar_hash(senha, salt), usuario))
+
+
+def salvar_foto(usuario, foto_b64):
+    with conexao() as con:
+        con.execute("UPDATE usuarios SET foto=? WHERE usuario=?", (foto_b64, usuario))
+
+
+def remover_foto(usuario):
+    with conexao() as con:
+        con.execute("UPDATE usuarios SET foto=NULL WHERE usuario=?", (usuario,))
+
+
+def atualizar_nome(usuario, novo_nome):
+    with conexao() as con:
+        con.execute("UPDATE usuarios SET nome=? WHERE usuario=?", (novo_nome, usuario))
 
 
 def salvar_pergunta(usuario, pergunta, resposta, linhas, quando):
@@ -225,10 +290,16 @@ def salvar_pergunta(usuario, pergunta, resposta, linhas, quando):
         )
 
 
-def listar_perguntas(usuario, limite=RECENTES):
+def listar_perguntas(usuario, limite=None):
     with conexao() as con:
+        if limite:
+            return con.execute(
+                "SELECT id, pergunta, resposta, criada_em FROM perguntas WHERE usuario=? ORDER BY id DESC LIMIT ?", 
+                (usuario, limite)
+            ).fetchall()
         return con.execute(
-            "SELECT id, pergunta FROM perguntas WHERE usuario=? ORDER BY id DESC LIMIT ?", (usuario, limite)
+            "SELECT id, pergunta, resposta, criada_em FROM perguntas WHERE usuario=? ORDER BY id DESC", 
+            (usuario,)
         ).fetchall()
 
 
@@ -237,10 +308,9 @@ def total_perguntas(usuario):
         return con.execute("SELECT COUNT(*) FROM perguntas WHERE usuario=?", (usuario,)).fetchone()[0]
 
 
-# ---------------------------------------------------------------- chamada à state machine
+# ---------------------------------------------------------------- INTEGRAÇÃO AWS STEP FUNCTIONS
 @st.cache_resource
 def cliente_sfn():
-    # No Streamlit Cloud as credenciais vêm de "Secrets"; no computador, do `aws configure`.
     try:
         aws = st.secrets["aws"]
         return boto3.client(
@@ -265,6 +335,8 @@ def consultar(pergunta):
 
 def erro_amigavel(e):
     t = str(e).lower()
+    if "bedrock" in t or "503" in t or "serviceunavailable" in t:
+        return "O serviço de Inteligência Artificial (Amazon Bedrock) está temporariamente em alta demanda. Por favor, tente novamente em instantes."
     if "credentials" in t:
         return "As credenciais da AWS não estão configuradas. Adicione-as em Settings → Secrets do app."
     if "accessdenied" in t or "not authorized" in t:
@@ -272,13 +344,50 @@ def erro_amigavel(e):
     return "Não foi possível concluir a consulta. Tente novamente em instantes."
 
 
-# ---------------------------------------------------------------- tabela e gráfico a partir dos dados
+# ---------------------------------------------------------------- HELPER DE LOGOS E GRÁFICOS
 HINT_ID = re.compile(r"(^|_)(id|cod|codigo|código|gtin|ean|cnpj|cpf|cep|fone|telefone|sku|ncm)(_|$)", re.I)
 HINT_ORDEM = re.compile(r"^(ano|year|mes|mês|month|dia|semana|trimestre)$", re.I)
+BLOCOS = re.compile(r"[█▓▒░▇▆▅▄▃▂▁■]")
+GRAFICO_TEXTO = re.compile(r"(?:^[ \t]*[#*\s]*Gr[áa]fico[^\n]*\n+)?^[ \t]*```[^\n]*\n(.*?)^[ \t]*```[ \t]*\n?", re.M | re.S)
+
+
+@lru_cache(maxsize=None)
+def img_b64(caminho):
+    p = Path(caminho)
+    if p.exists() and p.is_file():
+        try:
+            return base64.b64encode(p.read_bytes()).decode("utf-8")
+        except Exception:
+            return None
+    return None
+
+
+def logo_html(largura=200):
+    b64 = img_b64(LOGO)
+    if b64:
+        return (f"<img class='logo' alt='Farmazids Medicina Oriental' style='width:{largura}px; height:auto; display:block; margin:0 auto;' "
+                f"src='data:image/png;base64,{b64}'>")
+    return "<div class='logo-txt' style='font-family:Cinzel,serif; font-weight:800; color:#42205A; font-size:1.5rem; text-align:center;'>FARMAZIDS</div>"
+
+
+def emblema_html(largura=28):
+    b64 = img_b64(EMBLEMA)
+    if b64:
+        return f"<img alt='Emblema' style='width:{largura}px; height:{largura}px; border-radius:50%; object-fit:cover;' src='data:image/png;base64,{b64}'>"
+    return "🌿"
+
+
+def avatar_html(nome, foto_b64=None, tamanho=38):
+    if foto_b64:
+        return f"<img class='avatar-img' style='width:{tamanho}px; height:{tamanho}px; border-radius:50%; object-fit:cover; border:2px solid #C9AD7A;' src='data:image/png;base64,{foto_b64}'>"
+    b64_emblema = img_b64(EMBLEMA)
+    if b64_emblema:
+        return f"<img class='avatar-img' style='width:{tamanho}px; height:{tamanho}px; border-radius:50%; object-fit:cover; border:2px solid #C9AD7A;' src='data:image/png;base64,{b64_emblema}'>"
+    letra = nome[:1].upper() if nome else "U"
+    return f"<span class='avatar-txt' style='width:{tamanho}px; height:{tamanho}px; border-radius:50%; background:#42205A; color:#C9AD7A; display:inline-flex; align-items:center; justify-content:center; font-family:Cinzel,serif; font-weight:700;'>{esc(letra)}</span>"
 
 
 def esc(texto):
-    """Escapa HTML e o '$' (que o markdown do Streamlit trataria como fórmula)."""
     return html.escape(str(texto)).replace("$", "&#36;")
 
 
@@ -287,23 +396,17 @@ def rotulo_col(c):
     return s[:1].upper() + s[1:]
 
 
-BLOCOS = re.compile(r"[█▓▒░▇▆▅▄▃▂▁■]")
-GRAFICO_TEXTO = re.compile(r"(?:^[ \t]*[#*\s]*Gr[áa]fico[^\n]*\n+)?^[ \t]*```[^\n]*\n(.*?)^[ \t]*```[ \t]*\n?", re.M | re.S)
-
-
 def limpar_resposta(texto):
-    """Tira da resposta o que o app já mostra melhor: o título "Resposta" e gráficos feitos de texto (█)."""
     texto = GRAFICO_TEXTO.sub(lambda m: "" if BLOCOS.search(m.group(1)) else m.group(0), str(texto))
     texto = re.sub(r"^\s*#{1,6}\s*Resposta\s*:?\s*\n", "", texto, flags=re.I)
-    return texto.replace("$", "\\$").strip()    # "$" viraria fórmula no markdown
+    return texto.replace("$", "\\$").strip()
 
 
 def numerica(s):
-    """A coluna convertida em número, ou None se ela não for numérica (ou for um código)."""
     if s.dtype == bool or s.dropna().empty:
         return None
     if s.dtype == object or str(s.dtype).startswith("str"):
-        if s.dropna().astype(str).str.match(r"^0\d").any():   # "007": código, não quantidade
+        if s.dropna().astype(str).str.match(r"^0\d").any():
             return None
     n = pd.to_numeric(s, errors="coerce")
     return n if n.notna().sum() >= 0.95 * s.notna().sum() else None
@@ -318,7 +421,7 @@ def colunas_numericas(df):
         if n is None:
             continue
         v = n.dropna()
-        if (v % 1 == 0).all() and v.min() >= 1e11:           # GTIN, CNPJ etc.
+        if (v % 1 == 0).all() and v.min() >= 1e11:
             continue
         out[c] = n
     return out
@@ -342,7 +445,6 @@ ADITIVA = re.compile(r"(quant|qtd|total|venda|valor|unidade|receita|faturamento|
 
 
 def _dimensao(c, s, ja_numerica):
-    """Como a coluna serve de eixo: 'tempo', 'ordem' (ano, mês...) ou 'cat'; None se não serve."""
     if ja_numerica:
         return ("ordem", s) if HINT_ORDEM.match(str(c)) else (None, None)
     data = como_data(s)
@@ -354,13 +456,6 @@ def _dimensao(c, s, ja_numerica):
 
 
 def analisar(df):
-    """Diz se a resposta pede um gráfico. Devolve None se não fizer sentido.
-
-    Para cada par (coluna de categorias ou período, coluna de números) usa só as linhas em que os
-    dois existem, o que cobre respostas "mistas" (uma linha de resumo + várias de histórico).
-    Se a categoria se repete, soma os valores, mas só de medidas que se somam (quantidade, total,
-    valor...). Exige de 2 a 60 pontos (até 30 para categorias em texto). Códigos como GTIN não entram.
-    """
     if len(df) < 2:
         return None
     nums = colunas_numericas(df)
@@ -381,7 +476,7 @@ def analisar(df):
                 if not ADITIVA.search(str(m)):
                     continue
                 sub = sub.groupby("cat", as_index=False, sort=False)["val"].sum()
-            if not (2 <= len(sub) <= 60) or (tipo == "cat" and len(sub) > 30):
+            if not (2 <= len(sub) <= 120) or (tipo == "cat" and len(sub) > 60):
                 continue
             series[m] = {"df": sub, "tipo": tipo, "agregado": agregado}
         if series:
@@ -417,6 +512,84 @@ def tabela_html(df):
     return f"<div class='tabela-wrap'><table class='tabela'><thead><tr>{cab}</tr></thead><tbody>{corpo}</tbody></table></div>"
 
 
+def gerar_tabela_png(df):
+    recorte = df.head(30)
+    fig, ax = plt.subplots(figsize=(max(8, len(df.columns) * 1.8), max(3, len(recorte) * 0.45)), dpi=200)
+    ax.axis('tight')
+    ax.axis('off')
+    
+    table_data = [df.columns.tolist()] + recorte.values.tolist()
+    table = ax.table(cellText=table_data, loc='center', cellLoc='center')
+    table.auto_set_font_size(False)
+    
+    for key, cell in table.get_celld().items():
+        cell.set_fontsize(9)
+    table.scale(1.1, 1.6)
+    
+    for (row, col), cell in table.get_celld().items():
+        if row == 0:
+            cell.set_facecolor('#42205A')
+            cell.set_text_props(color='#C9AD7A', weight='bold')
+        else:
+            cell.set_facecolor('#FBF9F4' if row % 2 == 0 else '#FFFFFF')
+            cell.set_text_props(color='#2B2B2B')
+        cell.set_edgecolor('#C9D0DA')
+        
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=200)
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def gerar_grafico_png(d, dim, medida, forma, tipo):
+    t_cat, t_val = rotulo_col(dim), rotulo_col(medida)
+    muitos_itens = len(d) > 8 and tipo == "cat"
+    
+    if muitos_itens:
+        fig_h = max(4.5, len(d) * 0.35)
+        fig, ax = plt.subplots(figsize=(9, fig_h), dpi=200)
+    else:
+        fig, ax = plt.subplots(figsize=(8.5, 4.5), dpi=200)
+        
+    fig.patch.set_facecolor('#FBF9F4')
+    ax.set_facecolor('#FFFFFF')
+    
+    if forma == "Linhas":
+        ax.plot(d['rot'], d['val'], color='#42205A', marker='o', markerfacecolor='#C9AD7A', linewidth=2.5, markersize=6)
+        ax.tick_params(axis='x', rotation=45 if len(d) > 6 else 0)
+    elif muitos_itens:
+        bars = ax.barh(d['rot'], d['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, height=0.6)
+        for bar in bars:
+            w = bar.get_width()
+            ax.annotate(f'{w:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.'),
+                        xy=(w, bar.get_y() + bar.get_height() / 2),
+                        xytext=(5, 0), textcoords="offset points", ha='left', va='center', fontsize=8, color='#42205A', fontweight='bold')
+    else:
+        bars = ax.bar(d['rot'], d['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, width=0.55)
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(f'{height:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.'),
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8, color='#42205A', fontweight='bold')
+        ax.tick_params(axis='x', rotation=45 if len(d) > 6 else 0)
+                        
+    ax.set_title(f"{t_val} por {t_cat}", fontsize=12, fontweight='bold', color='#42205A', pad=15)
+    if muitos_itens:
+        ax.set_xlabel(t_val, color='#42205A', fontweight='bold', fontsize=10)
+        ax.grid(axis='x', linestyle='--', alpha=0.5, color='#C9D0DA')
+    else:
+        ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10)
+        ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
+    
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=200)
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def grafico(info):
     dim, series = info["dim"], info["series"]
     medidas = list(series)
@@ -425,11 +598,12 @@ def grafico(info):
     d, tipo = series[medida]["df"].copy(), series[medida]["tipo"]
     formas = ["Linhas", "Barras"] if tipo in ("tempo", "ordem") else ["Barras"]
     forma = c2.radio("Tipo de gráfico", formas, horizontal=True) if len(formas) > 1 else formas[0]
+
     if series[medida]["agregado"]:
         st.markdown(f"<div class='nota'>Valores somados por {esc(rotulo_col(dim).lower())}.</div>", unsafe_allow_html=True)
 
     if tipo == "cat":
-        d = d.sort_values("val", ascending=False)
+        d = d.sort_values("val", ascending=True if len(d) > 8 else False)
     else:
         d = d.sort_values("cat")
     t_cat, t_val = rotulo_col(dim), rotulo_col(medida)
@@ -438,35 +612,60 @@ def grafico(info):
         d["rot"] = d["cat"].dt.strftime("%m/%Y" if so_mes else "%d/%m/%Y")
     else:
         d["rot"] = d["cat"].astype(str)
+
     tip = [alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
     eixo_y = alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6, domain=False, ticks=False)
 
+    rotacao_x = -45 if len(d) > 6 or d["rot"].str.len().max() > 8 else 0
+
     if forma == "Linhas":
-        x = alt.X("cat:T", title=None, axis=alt.Axis(grid=False, labelAngle=0, format="%m/%Y" if so_mes else "%d/%m")) \
-            if tipo == "tempo" else alt.X("rot:O", title=None, axis=alt.Axis(grid=False, labelAngle=0))
+        x = alt.X("cat:T", title=None, axis=alt.Axis(grid=False, labelAngle=rotacao_x, format="%m/%Y" if so_mes else "%d/%m", labelOverlap="greedy")) \
+            if tipo == "tempo" else alt.X("rot:O", title=None, axis=alt.Axis(grid=False, labelAngle=rotacao_x, labelOverlap="greedy"))
         graf = alt.Chart(d).mark_line(
             color=ROXO, strokeWidth=2.5, point=alt.OverlayMarkDef(color=DOURADO, stroke=ROXO, filled=True, size=70)
-        ).encode(x=x, y=alt.Y("val:Q", title=t_val, axis=eixo_y), tooltip=tip).properties(height=360)
+        ).encode(x=x, y=alt.Y("val:Q", title=t_val, axis=eixo_y), tooltip=tip).properties(height=380)
     elif tipo == "cat" and (len(d) > 8 or d["rot"].str.len().max() > 16):
         graf = alt.Chart(d).mark_bar(color=ROXO, cornerRadiusEnd=4, size=18).encode(
-            y=alt.Y("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelLimit=280, domain=False, ticks=False)),
+            y=alt.Y("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelLimit=300, domain=False, ticks=False)),
             x=alt.X("val:Q", title=t_val, axis=alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6, domain=False, ticks=False)),
             tooltip=tip,
-        ).properties(height=max(220, 32 * len(d)))
+        ).properties(height=max(240, 32 * len(d)))
     else:
         graf = alt.Chart(d).mark_bar(color=ROXO, cornerRadiusEnd=4).encode(
-            x=alt.X("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelAngle=0, labelLimit=140, grid=False, domain=False, ticks=False)),
+            x=alt.X("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelAngle=rotacao_x, labelLimit=160, grid=False, domain=False, ticks=False)),
             y=alt.Y("val:Q", title=t_val, axis=eixo_y),
             tooltip=tip,
-        ).properties(height=360)
+        ).properties(height=380)
 
     graf = graf.configure(font="Poppins", background="transparent").configure_view(stroke=None).configure_axis(
-        labelColor="#5E4A70", titleColor=ROXO, labelFontSize=12, titleFontSize=12, titleFontWeight=600
+        labelColor="#5E4A70", titleColor=ROXO, labelFontSize=11, titleFontSize=12, titleFontWeight=600
     )
     st.altair_chart(graf, theme=None, **ESTICAR_ALT)
 
+    col_dl1, col_dl2 = st.columns([1, 1])
+    try:
+        col_dl1.download_button(
+            "🖼️ Baixar Gráfico em PNG",
+            data=gerar_grafico_png(d, dim, medida, forma, tipo),
+            file_name="grafico_farmazids.png",
+            mime="image/png"
+        )
+    except Exception:
+        pass
 
-# ---------------------------------------------------------------- navegação e estado
+    try:
+        html_str = graf.to_html()
+        col_dl2.download_button(
+            "📥 Baixar Gráfico (HTML Interativo)",
+            data=html_str,
+            file_name="grafico_farmazids.html",
+            mime="text/html"
+        )
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- NAVEGAÇÃO E HELPERS VISUAIS
 def ir(pagina):
     st.session_state.pagina = pagina
 
@@ -476,7 +675,7 @@ def alternar_menu():
 
 
 def sair():
-    for k in ("usuario", "nome", "resultado"):
+    for k in ("usuario", "nome", "foto", "resultado"):
         st.session_state.pop(k, None)
     ir("login")
 
@@ -498,17 +697,8 @@ def abrir_pergunta(id_):
         ir("consulta")
 
 
-# ---------------------------------------------------------------- componentes visuais
-@lru_cache(maxsize=None)
-def img_b64(caminho):
-    return base64.b64encode(Path(caminho).read_bytes()).decode()
-
-
-def logo_html(largura=240):
-    if LOGO.exists():
-        return (f"<img class='logo' alt='Farmazids Medicina Oriental' style='width:{largura}px' "
-                f"src='data:image/png;base64,{img_b64(LOGO)}'>")
-    return "<div class='logo-txt'>FARMAZIDS</div>"
+def limpar_busca():
+    st.session_state.consulta_pergunta = ""
 
 
 def titulo(texto, subtitulo=""):
@@ -523,20 +713,19 @@ def aviso():
 
 def painel_marca():
     st.markdown(
-        f"<div class='painel'><div class='painel-logo'>{logo_html(300)}</div>"
+        f"<div class='painel'><div class='painel-logo'>{logo_html(260)}</div>"
         "<div class='painel-t'>Consulta inteligente aos dados da Farmazids</div>"
-        "<div class='painel-p'>Pergunte em linguagem natural e receba a resposta, a tabela e, "
-        "quando fizer sentido, um gráfico.</div>"
+        "<div class='painel-p'>Pergunte em linguagem natural e receba a resposta, a tabela e "
+        "um gráfico na mesma página.</div>"
         "<div><div class='painel-i'>Perguntas em linguagem natural</div>"
-        "<div class='painel-i'>Tabelas prontas para baixar em CSV</div>"
-        "<div class='painel-i'>Gráficos gerados automaticamente</div>"
+        "<div class='painel-i'>Tabelas prontas para baixar em CSV e PNG</div>"
+        "<div class='painel-i'>Gráficos gerados automaticamente em PNG</div>"
         "<div class='painel-i'>Suas últimas consultas sempre à mão</div></div></div>",
         unsafe_allow_html=True,
     )
 
 
 def tela_dividida():
-    """Painel de marca à esquerda; devolve a coluna do formulário."""
     esq, dir_ = st.columns([1, 1], gap="large")
     with esq:
         painel_marca()
@@ -551,32 +740,43 @@ def topo():
             st.button("☰", key="menu", on_click=alternar_menu)
     with c2:
         if not aberto:
-            st.markdown(logo_html(210), unsafe_allow_html=True)
+            st.markdown(logo_html(180), unsafe_allow_html=True)
     with c3:
         nome = st.session_state.nome
-        st.markdown(f"<div class='usuario'>{esc(nome)}<span class='avatar'>{esc(nome[:1].upper())}</span></div>",
-                    unsafe_allow_html=True)
+        foto = st.session_state.get("foto")
+        av_html = avatar_html(nome, foto, tamanho=38)
+        st.markdown(f"<div class='usuario'>{esc(nome)}{av_html}</div>", unsafe_allow_html=True)
 
 
 def menu_lateral():
-    """Só é chamado com o menu aberto; sem chamada, o Streamlit não desenha a barra lateral."""
     with st.sidebar:
-        st.markdown(f"<div class='side-logo'>{logo_html(220)}</div>", unsafe_allow_html=True)
-        st.button("Nova consulta", key="nova", type="primary", on_click=nova_consulta, **ESTICAR)
+        # Logo no topo da barra lateral (centralizada)
+        st.markdown(f"<div class='side-logo'>{logo_html(200)}</div>", unsafe_allow_html=True)
+        st.button("➕ Nova consulta", key="nova", type="primary", on_click=nova_consulta, **ESTICAR)
+        
         st.markdown("<div class='side-titulo'>Consultas recentes</div>", unsafe_allow_html=True)
-        perguntas = listar_perguntas(st.session_state.usuario)
+        perguntas = listar_perguntas(st.session_state.usuario, limite=RECENTES_LIMIT)
         if not perguntas:
             st.markdown("<div class='side-vazio'>Suas perguntas aparecerão aqui.</div>", unsafe_allow_html=True)
         for p in perguntas:
-            texto = p["pergunta"] if len(p["pergunta"]) <= 30 else p["pergunta"][:29] + "…"
-            st.button(texto, key=f"hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), **ESTICAR)
+            texto = p["pergunta"] if len(p["pergunta"]) <= 28 else p["pergunta"][:27] + "…"
+            st.button(f"💬 {texto}", key=f"hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), **ESTICAR)
+        
+        tot = total_perguntas(st.session_state.usuario)
+        if tot > 0:
+            st.button("📜 Histórico de consultas", key="ver_historico_completo", on_click=ir, args=("historico",), **ESTICAR)
+
         st.markdown("<hr class='side-linha'>", unsafe_allow_html=True)
-        st.button("Perfil", key="perfil", on_click=ir, args=("perfil",), **ESTICAR)
-        st.button("Sair", key="sair", on_click=sair, **ESTICAR)
-        st.button("Ocultar menu", key="ocultar", on_click=alternar_menu, **ESTICAR)
+        st.button("👤 Perfil", key="perfil", on_click=ir, args=("perfil",), **ESTICAR)
+        st.button("🚪 Sair", key="sair", on_click=sair, **ESTICAR)
+        
+        # Botão minimalista para ocultar menu
+        st.markdown("<div class='btn-ocultar'>", unsafe_allow_html=True)
+        st.button("« Ocultar menu", key="ocultar", on_click=alternar_menu, **ESTICAR)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ---------------------------------------------------------------- páginas
+# ---------------------------------------------------------------- PÁGINAS DA APLICAÇÃO
 def pagina_login():
     with tela_dividida():
         st.markdown("<div class='form-topo'></div>", unsafe_allow_html=True)
@@ -591,9 +791,9 @@ def pagina_login():
 
     if entrar:
         usuario = usuario.strip().lower()
-        nome = autenticar(usuario, senha)
+        nome, foto = autenticar(usuario, senha)
         if nome:
-            st.session_state.update(usuario=usuario, nome=nome, resultado=None, menu_aberto=True)
+            st.session_state.update(usuario=usuario, nome=nome, foto=foto, resultado=None, menu_aberto=True)
             ir("consulta")
             st.rerun()
         else:
@@ -648,45 +848,67 @@ def mostrar_resultado(res):
     st.markdown("".join(f"<span class='chip'>{esc(c)}</span>" for c in chips), unsafe_allow_html=True)
 
     if res.get("resposta"):
-        st.markdown("<div class='rot'>Resposta</div>", unsafe_allow_html=True)
         try:
             caixa = st.container(key="resposta")
-        except TypeError:                      # Streamlit antigo, sem "key" em container
+        except TypeError:
             caixa = st.container(border=True)
         with caixa:
+            st.markdown(
+                f"<div class='bot-header'>{emblema_html(28)}<span class='bot-nome'>Farmazids AI</span></div>",
+                unsafe_allow_html=True
+            )
             st.markdown(limpar_resposta(res["resposta"]))
+    elif df.empty:
+        st.warning("Não foram encontrados dados para os critérios informados. Verifique a grafia ou tente buscar sem especificar a dosagem ou quantidade exata.")
 
     if df.empty:
         return
-    st.markdown("<div class='rot'>Dados</div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='rot'>Tabela de Dados</div>", unsafe_allow_html=True)
+    st.markdown(tabela_html(df), unsafe_allow_html=True)
+    if len(df) > MAX_LINHAS:
+        st.markdown(f"<div class='nota'>Exibindo {MAX_LINHAS} de {len(df)} linhas. Baixe o CSV para ver todas.</div>",
+                    unsafe_allow_html=True)
+
+    col_tb1, col_tb2 = st.columns(2)
+    col_tb1.download_button(
+        "📥 Baixar Tabela em CSV",
+        df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="consulta_farmazids.csv",
+        mime="text/csv"
+    )
+    col_tb2.download_button(
+        "🖼️ Baixar Tabela em PNG",
+        data=gerar_tabela_png(df),
+        file_name="tabela_farmazids.png",
+        mime="image/png"
+    )
+
     info = analisar(df)
     if info:
-        aba_tabela, aba_grafico = st.tabs(["Tabela", "Gráfico"])
-    else:
-        aba_tabela, aba_grafico = st.container(), None
-
-    with aba_tabela:
-        st.markdown(tabela_html(df), unsafe_allow_html=True)
-        if len(df) > MAX_LINHAS:
-            st.markdown(f"<div class='nota'>Exibindo {MAX_LINHAS} de {len(df)} linhas. Baixe o CSV para ver todas.</div>",
-                        unsafe_allow_html=True)
-        st.download_button("Baixar CSV", df.to_csv(index=False).encode("utf-8-sig"),
-                           file_name="consulta.csv", mime="text/csv")
-    if aba_grafico is not None:
-        with aba_grafico:
-            try:
-                grafico(info)
-            except Exception:
-                st.info("Não foi possível montar o gráfico para estes dados. A tabela mostra o resultado completo.")
+        st.markdown("<div class='rot'>Visualização Gráfica</div>", unsafe_allow_html=True)
+        try:
+            grafico(info)
+        except Exception:
+            pass
 
 
 def pagina_consulta():
     topo()
     titulo("Consulta aos dados", "Faça uma pergunta em linguagem natural sobre os dados da Farmazids.")
+    
+    # Formulário configurado para acionar o envio de busca ao pressionar Enter
     with st.form("form_consulta", border=True):
-        c1, c2 = st.columns([5, 1.3], vertical_alignment="bottom")
+        c1, c2, c3 = st.columns([5, 1.4, 0.8], vertical_alignment="bottom")
         pergunta = c1.text_input("Sua pergunta", key="consulta_pergunta", placeholder="Digite sua pergunta sobre os dados")
+        
+        # O PRIMEIRO form_submit_button é o acionado por padrão ao pressionar Enter
         enviar = c2.form_submit_button("Perguntar", type="primary", **ESTICAR_FORM)
+        limpar = c3.form_submit_button("✖", help="Limpar texto da busca", **ESTICAR_FORM)
+
+    if limpar:
+        limpar_busca()
+        st.rerun()
 
     if enviar:
         pergunta = pergunta.strip()
@@ -694,18 +916,16 @@ def pagina_consulta():
             st.warning("Digite uma pergunta para consultar.")
         else:
             try:
-                with st.spinner("Analisando os dados..."):
+                with st.spinner("Consultando dados da Farmazids..."):
                     saida = consultar(pergunta)
             except Exception as e:
                 st.error(erro_amigavel(e))
-                with st.expander("Detalhes técnicos"):
-                    st.code(str(e))
             else:
                 quando = datetime.now().isoformat(timespec="seconds")
                 resposta, linhas = saida.get("resposta"), saida.get("linhas") or []
                 salvar_pergunta(st.session_state.usuario, pergunta, resposta, linhas, quando)
                 st.session_state.resultado = {"pergunta": pergunta, "resposta": resposta, "linhas": linhas, "quando": quando}
-                st.rerun()  # atualiza as consultas recentes no menu
+                st.rerun()
 
     if st.session_state.get("resultado"):
         mostrar_resultado(st.session_state.resultado)
@@ -713,28 +933,108 @@ def pagina_consulta():
         st.markdown(
             "<div class='vazio'><div class='h2'>Faça sua primeira pergunta</div>"
             "<div class='dica'>Seja específico: diga o que quer saber e sobre qual produto, categoria ou período.</div>"
-            "<div class='dica'>Peça rankings, comparações ou evolução ao longo do tempo para receber também um gráfico.</div>"
-            "<div class='dica'>Suas três consultas mais recentes ficam no menu, para reabrir quando quiser.</div></div>",
+            "<div class='dica'>Peça rankings, comparações ou evolução ao longo do tempo para gerar também o gráfico.</div>"
+            "<div class='dica'>Suas consultas recentes ficam no menu lateral para reabrir quando quiser.</div></div>",
             unsafe_allow_html=True,
         )
+
+
+def pagina_historico():
+    topo()
+    titulo("Histórico de Consultas", "Veja todas as suas perguntas anteriores e o resumo das respostas fornecidas.")
+    
+    perguntas = listar_perguntas(st.session_state.usuario)
+    if not perguntas:
+        st.markdown("<div class='vazio'><div class='h2'>Nenhuma consulta realizada ainda.</div>"
+                    "<div class='dica'>Suas perguntas e respostas salvas aparecerão listadas aqui.</div></div>", unsafe_allow_html=True)
+        return
+
+    for p in perguntas:
+        dt_str = p["criada_em"]
+        try:
+            dt_fmt = datetime.fromisoformat(dt_str).strftime("%d/%m/%Y às %H:%M")
+        except Exception:
+            dt_fmt = dt_str
+
+        resp_resumo = limpar_resposta(p["resposta"]) if p["resposta"] else "Consulta sem resposta textual gerada."
+        if len(resp_resumo) > 300:
+            resp_resumo = resp_resumo[:297] + "..."
+
+        st.markdown(
+            f"<div class='hist-card'>"
+            f"<div class='hist-pergunta'>💬 {esc(p['pergunta'])}</div>"
+            f"<div class='hist-data'>Realizada em {dt_fmt}</div>"
+            f"<div class='hist-resposta'><b>Resposta resumida:</b><br>{esc(resp_resumo)}</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+        if st.button("🔍 Abrir esta consulta completa", key=f"abrir_hist_{p['id']}"):
+            abrir_pergunta(p["id"])
 
 
 def pagina_perfil():
     topo()
-    titulo("Perfil", "Seus dados de acesso e segurança da conta.")
+    titulo("Perfil", "Gerencie sua foto de perfil, nome completo e segurança da conta.")
     aviso()
     esq, dir_ = st.columns([2, 3], gap="large")
     with esq:
-        emb = (f"<img alt='Farmazids' src='data:image/png;base64,{img_b64(EMBLEMA)}'>" if EMBLEMA.exists() else "")
+        foto = st.session_state.get("foto")
         total = total_perguntas(st.session_state.usuario)
+        
+        if foto:
+            img_perfil = f"<img class='perfil-avatar-lg' src='data:image/png;base64,{foto}'>"
+        elif EMBLEMA.exists():
+            img_perfil = f"<img class='perfil-avatar-lg' src='data:image/png;base64,{img_b64(EMBLEMA)}'>"
+        else:
+            img_perfil = f"<div class='avatar-txt' style='width:96px;height:96px;font-size:2.5rem;margin:0 auto;'>{st.session_state.nome[:1].upper()}</div>"
+
         st.markdown(
-            f"<div class='perfil'>{emb}<div class='perfil-nome'>{esc(st.session_state.nome)}</div>"
+            f"<div class='perfil-card'>{img_perfil}"
+            f"<div class='perfil-nome'>{esc(st.session_state.nome)}</div>"
             f"<div class='perfil-user'>@{esc(st.session_state.usuario)}</div>"
             f"<div class='perfil-stat'><b>{total}</b>consulta{'s' if total != 1 else ''} realizada{'s' if total != 1 else ''}</div></div>",
             unsafe_allow_html=True,
         )
+        
+        st.markdown("<div class='rot'>Foto do Perfil</div>", unsafe_allow_html=True)
+        nova_foto = st.file_uploader("Escolha uma imagem (PNG ou JPG)", type=["png", "jpg", "jpeg"])
+        if nova_foto is not None:
+            foto_bytes = nova_foto.read()
+            foto_b64 = base64.b64encode(foto_bytes).decode("utf-8")
+            salvar_foto(st.session_state.usuario, foto_b64)
+            st.session_state.foto = foto_b64
+            st.success("Foto atualizada com sucesso!")
+            st.rerun()
+
+        if foto:
+            if st.button("🗑️ Remover foto de perfil", key="b_rem_foto", **ESTICAR):
+                remover_foto(st.session_state.usuario)
+                st.session_state.foto = None
+                st.success("Foto de perfil removida com sucesso!")
+                st.rerun()
+
+        st.markdown("---")
         st.button("Sair da conta", key="b_sair", on_click=sair, **ESTICAR)
+
     with dir_:
+        with st.form("form_nome", border=True):
+            st.markdown("<div class='h2'>Alterar nome completo</div><div class='mudo' style='margin-top:.2rem'>"
+                        "Atualize o nome de exibição no seu perfil.</div>", unsafe_allow_html=True)
+            novo_nome = st.text_input("Novo nome completo", value=st.session_state.nome, placeholder="Digite o seu novo nome completo")
+            ok_nome = st.form_submit_button("Salvar nome", type="primary", **ESTICAR_FORM)
+
+        if ok_nome:
+            novo_nome_limpo = novo_nome.strip()
+            if not novo_nome_limpo:
+                st.error("O nome não pode ficar em branco.")
+            else:
+                atualizar_nome(st.session_state.usuario, novo_nome_limpo)
+                st.session_state.nome = novo_nome_limpo
+                st.session_state.aviso = ("success", "Nome alterado com sucesso.")
+                st.rerun()
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
         with st.form("form_senha", border=True):
             st.markdown("<div class='h2'>Redefinir senha</div><div class='mudo' style='margin-top:.2rem'>"
                         "Informe a senha atual e escolha uma nova.</div>", unsafe_allow_html=True)
@@ -742,10 +1042,11 @@ def pagina_perfil():
             c1, c2 = st.columns(2)
             nova = c1.text_input("Nova senha", key="nova_senha", type="password", placeholder="Mínimo de 6 caracteres")
             conf = c2.text_input("Confirmar nova senha", key="nova_conf", type="password", placeholder="Repita a nova senha")
-            ok = st.form_submit_button("Salvar nova senha", type="primary", **ESTICAR_FORM)
+            ok_senha = st.form_submit_button("Salvar nova senha", type="primary", **ESTICAR_FORM)
 
-        if ok:
-            if not autenticar(st.session_state.usuario, atual):
+        if ok_senha:
+            nome, _ = autenticar(st.session_state.usuario, atual)
+            if not nome:
                 st.error("A senha atual está incorreta.")
             elif len(nova) < 6:
                 st.error("A nova senha precisa ter pelo menos 6 caracteres.")
@@ -757,21 +1058,34 @@ def pagina_perfil():
                 st.rerun()
 
 
-PAGINAS = {"login": pagina_login, "cadastro": pagina_cadastro, "consulta": pagina_consulta, "perfil": pagina_perfil}
+PAGINAS = {
+    "login": pagina_login,
+    "cadastro": pagina_cadastro,
+    "consulta": pagina_consulta,
+    "historico": pagina_historico,
+    "perfil": pagina_perfil
+}
 
 
 def main():
-    st.set_page_config(page_title="Farmazids", page_icon=str(EMBLEMA) if EMBLEMA.exists() else "🌿",
-                       layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(
+        page_title="Farmazids", 
+        page_icon=str(EMBLEMA) if EMBLEMA.exists() else "🌿",
+        layout="wide", 
+        initial_sidebar_state="expanded"
+    )
     iniciar_db()
     st.markdown(CSS, unsafe_allow_html=True)
     st.session_state.setdefault("pagina", "login")
     st.session_state.setdefault("menu_aberto", True)
+    
     if "usuario" not in st.session_state and st.session_state.pagina not in ("login", "cadastro"):
         ir("login")
-    if st.session_state.pagina in ("consulta", "perfil") and st.session_state.get("menu_aberto"):
+    if st.session_state.pagina in ("consulta", "historico", "perfil") and st.session_state.get("menu_aberto"):
         menu_lateral()
+        
     PAGINAS[st.session_state.pagina]()
 
 
-main()
+if __name__ == "__main__":
+    main()
