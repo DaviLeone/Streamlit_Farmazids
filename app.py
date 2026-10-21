@@ -130,6 +130,8 @@ div[data-baseweb="base-input"] { background:transparent !important; }
 .tabela tbody tr:hover td { background:rgba(216,195,238,.35) !important; }
 .tabela tbody tr:last-child td { border-bottom:none; }
 .tabela .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.tabela a { color: var(--roxo) !important; font-weight: 600; text-decoration: underline; }
+.tabela a:hover { color: var(--dourado) !important; }
 
 .painel { background:var(--roxo) !important; border-radius:20px; padding:2.6rem 2.4rem; min-height:640px; display:flex; flex-direction:column; justify-content:center; gap:1.7rem; }
 .painel-logo { background:var(--fundo) !important; border-radius:14px; border-bottom:4px solid var(--dourado); padding:1.2rem 1.5rem; max-width:340px; text-align:center; margin:0 auto; }
@@ -496,16 +498,26 @@ def tabela_html(df):
     inteiros = {c for c, n in nums.items() if (n.dropna() % 1 == 0).all()}
     recorte = df.head(MAX_LINHAS)
     colunas = []
+    
     for c in df.columns:
         if c in nums:
             colunas.append([fmt_num(x, c in inteiros) for x in nums[c].head(MAX_LINHAS)])
         else:
-            colunas.append(["—" if (x is None or x == "" or (isinstance(x, float) and x != x)) else str(x)
-                            for x in recorte[c]])
+            valores_formatados = []
+            for x in recorte[c]:
+                if x is None or x == "" or (isinstance(x, float) and x != x):
+                    valores_formatados.append("—")
+                elif str(c).lower() == "url_produto" or str(x).startswith("http"):
+                    link = str(x)
+                    valores_formatados.append(f"<a href='{esc(link)}' target='_blank' rel='noopener noreferrer'>🔗 Acessar Produto</a>")
+                else:
+                    valores_formatados.append(esc(x))
+            colunas.append(valores_formatados)
+            
     cab = "".join(f"<th class='{'num' if c in nums else ''}'>{esc(rotulo_col(c))}</th>" for c in df.columns)
     corpo = "".join(
         "<tr>" + "".join(
-            f"<td class='{'num' if c in nums else ''}'>{esc(v)}</td>" for c, v in zip(df.columns, linha)
+            f"<td class='{'num' if c in nums else ''}'>{v if ('<a href=' in v or v == '—') else v}</td>" for c, v in zip(df.columns, linha)
         ) + "</tr>"
         for linha in zip(*colunas)
     )
@@ -865,21 +877,40 @@ def mostrar_resultado(res):
         return
 
     st.markdown("<div class='rot'>Tabela de Dados</div>", unsafe_allow_html=True)
-    st.markdown(tabela_html(df), unsafe_allow_html=True)
-    if len(df) > MAX_LINHAS:
-        st.markdown(f"<div class='nota'>Exibindo {MAX_LINHAS} de {len(df)} linhas. Baixe o CSV para ver todas.</div>",
+
+    # Definir colunas padrão para exibição inicial enxuta
+    colunas_padrao = [c for c in ["nome", "farmacia", "preco_pix_avista", "valor_cartao_total", "url_produto"] if c in df.columns]
+    if not colunas_padrao:
+        colunas_padrao = list(df.columns)
+
+    # Seletor interativo de colunas
+    colunas_selecionadas = st.multiselect(
+        "📋 Selecione as colunas para exibir na tabela:",
+        options=list(df.columns),
+        default=colunas_padrao,
+        format_func=rotulo_col
+    )
+
+    if not colunas_selecionadas:
+        colunas_selecionadas = colunas_padrao
+
+    df_exibicao = df[colunas_selecionadas]
+
+    st.markdown(tabela_html(df_exibicao), unsafe_allow_html=True)
+    if len(df_exibicao) > MAX_LINHAS:
+        st.markdown(f"<div class='nota'>Exibindo {MAX_LINHAS} de {len(df_exibicao)} linhas. Baixe o CSV para ver todas.</div>",
                     unsafe_allow_html=True)
 
     col_tb1, col_tb2 = st.columns(2)
     col_tb1.download_button(
-        "📥 Baixar Tabela em CSV",
+        "📥 Baixar Tabela Completa (CSV)",
         df.to_csv(index=False).encode("utf-8-sig"),
         file_name="consulta_farmazids.csv",
         mime="text/csv"
     )
     col_tb2.download_button(
-        "🖼️ Baixar Tabela em PNG",
-        data=gerar_tabela_png(df),
+        "🖼️ Baixar Tabela Exibida em PNG",
+        data=gerar_tabela_png(df_exibicao),
         file_name="tabela_farmazids.png",
         mime="image/png"
     )
@@ -897,12 +928,10 @@ def pagina_consulta():
     topo()
     titulo("Consulta aos dados", "Faça uma pergunta em linguagem natural sobre os dados da Farmazids.")
     
-    # Formulário configurado para acionar o envio de busca ao pressionar Enter
     with st.form("form_consulta", border=True):
         c1, c2, c3 = st.columns([5, 1.4, 0.8], vertical_alignment="bottom")
         pergunta = c1.text_input("Sua pergunta", key="consulta_pergunta", placeholder="Digite sua pergunta sobre os dados")
         
-        # O PRIMEIRO form_submit_button é o acionado por padrão ao pressionar Enter
         enviar = c2.form_submit_button("Perguntar", type="primary", **ESTICAR_FORM)
         limpar = c3.form_submit_button("✖", help="Limpar texto da busca", **ESTICAR_FORM)
 
