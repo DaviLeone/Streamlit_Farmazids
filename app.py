@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 import sqlite3
+import textwrap
 from contextlib import contextmanager
 from datetime import datetime
 from functools import lru_cache
@@ -28,11 +29,11 @@ STATE_MACHINE_ARN = "arn:aws:states:us-east-2:906513713169:stateMachine:farmazid
 REGIAO = "us-east-2"
 # -------------------------
 
-# --- CONFIGURAÇÃO DE CAMINHOS RELATIVOS ---
+# --- CONFIGURAÇÃO DE CAMINHOS RELATIVOS PARA O GITHUB ---
 BASE = Path(__file__).resolve().parent
 DB = BASE / "farmazids.db"
-LOGO = BASE / "logo.png"          # Logo retangular
-EMBLEMA = BASE / "emblema.png"    # Emblema redondo
+LOGO = BASE / "logo.png"          # Logo retangular na raiz
+EMBLEMA = BASE / "emblema.png"    # Emblema redondo na raiz
 
 USUARIO_OK = re.compile(r"^[a-z0-9_.-]{3,30}$")
 RECENTES_LIMIT = 5    # Limite máximo de conversas no menu lateral
@@ -525,30 +526,82 @@ def tabela_html(df):
 
 
 def gerar_tabela_png(df):
-    recorte = df.head(30)
-    fig, ax = plt.subplots(figsize=(max(8, len(df.columns) * 1.8), max(3, len(recorte) * 0.45)), dpi=200)
-    ax.axis('tight')
-    ax.axis('off')
+    recorte = df.head(30).copy()
     
-    table_data = [df.columns.tolist()] + recorte.values.tolist()
-    table = ax.table(cellText=table_data, loc='center', cellLoc='center')
-    table.auto_set_font_size(False)
+    # 1. Limpa tags HTML
+    for col in recorte.columns:
+        recorte[col] = recorte[col].astype(str).apply(lambda x: re.sub(r'<[^>]*>', '', str(x)))
     
-    for key, cell in table.get_celld().items():
-        cell.set_fontsize(9)
-    table.scale(1.1, 1.6)
-    
-    for (row, col), cell in table.get_celld().items():
-        if row == 0:
-            cell.set_facecolor('#42205A')
-            cell.set_text_props(color='#C9AD7A', weight='bold')
+    # 2. Aplica quebra de linha (permitindo quebrar URLs e palavras sem espaço)
+    for col in recorte.columns:
+        if 'url' in str(col).lower() or 'link' in str(col).lower():
+            recorte[col] = recorte[col].apply(
+                lambda x: "\n".join(textwrap.wrap(str(x), width=28, break_long_words=True, break_on_hyphens=True))
+            )
         else:
-            cell.set_facecolor('#FBF9F4' if row % 2 == 0 else '#FFFFFF')
-            cell.set_text_props(color='#2B2B2B')
-        cell.set_edgecolor('#C9D0DA')
-        
+            recorte[col] = recorte[col].apply(
+                lambda x: "\n".join(textwrap.wrap(str(x), width=28)) if len(str(x)) > 28 else str(x)
+            )
+
+    col_names = [rotulo_col(c) for c in recorte.columns]
+    table_data = [col_names] + recorte.values.tolist()
+    num_cols = len(recorte.columns)
+
+    # 3. Define larguras relativas inteligentes para as colunas
+    col_widths = []
+    for col in recorte.columns:
+        c_lower = str(col).lower()
+        if 'url' in c_lower:
+            col_widths.append(0.35)
+        elif 'nome' in c_lower or 'produto' in c_lower:
+            col_widths.append(0.30)
+        else:
+            col_widths.append(0.12)
+            
+    total_w = sum(col_widths)
+    col_widths = [w / total_w for w in col_widths]
+
+    # 4. Contagem exata de linhas de texto para altura proporcional
+    row_line_counts = []
+    for row in table_data:
+        max_lines_in_row = max(str(cell).count('\n') + 1 for cell in row)
+        row_line_counts.append(max_lines_in_row)
+
+    total_text_lines = sum(row_line_counts)
+    
+    fig_w = 16.0
+    fig_h = max(4.0, total_text_lines * 0.45 + 1.0)
+    
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=200)
+    fig.patch.set_facecolor('#FBF9F4')
+    ax.axis('off')
+
+    table = ax.table(
+        cellText=table_data, 
+        colWidths=col_widths,
+        loc='center', 
+        cellLoc='left'
+    )
+    table.auto_set_font_size(False)
+
+    # 5. Ajusta altura e formatação de cada célula
+    for row_idx, line_count in enumerate(row_line_counts):
+        cell_height = (line_count / total_text_lines) * 0.92
+        for col_idx in range(num_cols):
+            cell = table[row_idx, col_idx]
+            cell.set_height(cell_height)
+            cell.set_fontsize(8.5)
+            
+            if row_idx == 0:
+                cell.set_facecolor('#42205A')
+                cell.set_text_props(color='#C9AD7A', weight='bold', ha='center', va='center')
+            else:
+                cell.set_facecolor('#FBF9F4' if row_idx % 2 == 0 else '#FFFFFF')
+                cell.set_text_props(color='#2B2B2B', va='center')
+            cell.set_edgecolor('#C9D0DA')
+
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=200)
+    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.2, dpi=200, facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
     return buf.getvalue()
@@ -558,43 +611,55 @@ def gerar_grafico_png(d, dim, medida, forma, tipo):
     t_cat, t_val = rotulo_col(dim), rotulo_col(medida)
     muitos_itens = len(d) > 8 and tipo == "cat"
     
+    # Quebra textos longos para os eixos do gráfico
+    d_plot = d.copy()
+    d_plot['rot_clean'] = d_plot['rot'].astype(str).apply(lambda x: "\n".join(textwrap.wrap(x, width=45)))
+
     if muitos_itens:
-        fig_h = max(4.5, len(d) * 0.35)
-        fig, ax = plt.subplots(figsize=(9, fig_h), dpi=200)
+        fig_h = max(5.0, len(d_plot) * 0.8)
+        fig_w = 12.0
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=200)
     else:
-        fig, ax = plt.subplots(figsize=(8.5, 4.5), dpi=200)
+        fig, ax = plt.subplots(figsize=(10.0, 5.5), dpi=200)
         
     fig.patch.set_facecolor('#FBF9F4')
     ax.set_facecolor('#FFFFFF')
     
     if forma == "Linhas":
-        ax.plot(d['rot'], d['val'], color='#42205A', marker='o', markerfacecolor='#C9AD7A', linewidth=2.5, markersize=6)
-        ax.tick_params(axis='x', rotation=45 if len(d) > 6 else 0)
+        ax.plot(d_plot['rot_clean'], d_plot['val'], color='#42205A', marker='o', markerfacecolor='#C9AD7A', linewidth=2.5, markersize=6)
+        ax.tick_params(axis='x', rotation=45 if len(d_plot) > 6 else 0)
     elif muitos_itens:
-        bars = ax.barh(d['rot'], d['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, height=0.6)
+        bars = ax.barh(d_plot['rot_clean'], d_plot['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, height=0.6)
+        
+        max_val = d_plot['val'].max() if not d_plot['val'].empty else 1
+        ax.set_xlim(0, max_val * 1.18)
+        
         for bar in bars:
             w = bar.get_width()
             ax.annotate(f'{w:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.'),
                         xy=(w, bar.get_y() + bar.get_height() / 2),
-                        xytext=(5, 0), textcoords="offset points", ha='left', va='center', fontsize=8, color='#42205A', fontweight='bold')
+                        xytext=(6, 0), textcoords="offset points", ha='left', va='center', fontsize=8.5, color='#42205A', fontweight='bold')
     else:
-        bars = ax.bar(d['rot'], d['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, width=0.55)
+        bars = ax.bar(d_plot['rot_clean'], d_plot['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, width=0.55)
+        
+        max_val = d_plot['val'].max() if not d_plot['val'].empty else 1
+        ax.set_ylim(0, max_val * 1.15)
+        
         for bar in bars:
             height = bar.get_height()
             ax.annotate(f'{height:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.'),
                         xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8, color='#42205A', fontweight='bold')
-        ax.tick_params(axis='x', rotation=45 if len(d) > 6 else 0)
+                        xytext=(0, 4), textcoords="offset points", ha='center', va='bottom', fontsize=8.5, color='#42205A', fontweight='bold')
+        ax.tick_params(axis='x', rotation=45 if len(d_plot) > 6 else 0)
                         
-    ax.set_title(f"{t_val} por {t_cat}", fontsize=12, fontweight='bold', color='#42205A', pad=15)
+    ax.set_title(f"{t_val} por {t_cat}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
     if muitos_itens:
-        ax.set_xlabel(t_val, color='#42205A', fontweight='bold', fontsize=10)
+        ax.set_xlabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
         ax.grid(axis='x', linestyle='--', alpha=0.5, color='#C9D0DA')
     else:
-        ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10)
+        ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
         ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
     
-    plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=200)
     plt.close(fig)
@@ -878,12 +943,10 @@ def mostrar_resultado(res):
 
     st.markdown("<div class='rot'>Tabela de Dados</div>", unsafe_allow_html=True)
 
-    # Definir colunas padrão para exibição inicial enxuta
     colunas_padrao = [c for c in ["nome", "farmacia", "preco_pix_avista", "valor_cartao_total", "url_produto"] if c in df.columns]
     if not colunas_padrao:
         colunas_padrao = list(df.columns)
 
-    # Seletor interativo de colunas
     colunas_selecionadas = st.multiselect(
         "📋 Selecione as colunas para exibir na tabela:",
         options=list(df.columns),
