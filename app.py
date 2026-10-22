@@ -88,8 +88,9 @@ CSS = """<style>
 .chip { display:inline-block; background:rgba(216,195,238,.5); color:var(--roxo) !important; border-radius:999px; padding:.2rem .85rem; font-size:.8rem; font-weight:500; margin:0 .4rem .6rem 0; }
 
 .st-key-resposta { background:#fff !important; border:1.5px solid var(--dourado) !important; border-left:6px solid var(--roxo) !important; border-radius:14px; padding:1.4rem 1.6rem; box-shadow:0 4px 12px rgba(66,32,90,.08); margin-bottom:1.2rem; }
-.st-key-resposta p, .st-key-resposta li { line-height:1.75; font-size:1.05rem; color:var(--texto) !important; }
-.st-key-resposta h1, .st-key-resposta h2, .st-key-resposta h3, .st-key-resposta h4 { font-family:'Cinzel',serif; font-size:1.15rem; color:var(--roxo) !important; margin:.3rem 0 .6rem; padding:0; }
+.st-key-resposta [data-testid="stMarkdownContainer"] :is(p, li, h1, h2, h3, h4, h5, h6, strong, em, span, a):not(.bot-nome) { font-family:'Poppins',sans-serif !important; text-transform:none !important; letter-spacing:normal !important; font-variant:normal !important; }
+.st-key-resposta [data-testid="stMarkdownContainer"] :is(p, li, h1, h2, h3, h4, h5, h6) { font-size:1.08rem !important; font-weight:400 !important; line-height:1.85 !important; color:var(--texto) !important; margin:0 0 .75rem !important; padding:0 !important; }
+.st-key-resposta [data-testid="stMarkdownContainer"] :is(strong, b) { font-weight:600 !important; color:var(--roxo) !important; }
 
 .bot-header { display:flex; align-items:center; gap:10px; margin-bottom:1rem; border-bottom:1px solid rgba(201,208,218,.5); padding-bottom:.6rem; }
 .bot-header img { width:30px; height:30px; border-radius:50%; }
@@ -104,7 +105,7 @@ CSS = """<style>
 .hist-card { background:#fff !important; border:1px solid var(--borda) !important; border-radius:14px; padding:1.2rem 1.4rem; margin-bottom:1rem; box-shadow:0 2px 6px rgba(66,32,90,.04); }
 .hist-pergunta { font-family:'Cinzel',serif; font-weight:700; font-size:1.1rem; color:var(--roxo) !important; margin-bottom:.3rem; }
 .hist-data { font-size:.78rem; color:var(--mudo) !important; margin-bottom:.6rem; }
-.hist-resposta { font-size:.92rem; color:var(--texto) !important; line-height:1.5; background:var(--fundo); padding:.8rem 1rem; border-radius:8px; border-left:3px solid var(--dourado); }
+.hist-resposta { font-size:.92rem; color:var(--texto) !important; line-height:1.5; background:var(--fundo); padding:.8rem 1rem; border-radius:8px; border-left:3px solid var(--dourado); margin-bottom:.8rem; }
 
 [data-testid="stWidgetLabel"] p { color:var(--roxo) !important; font-size:.85rem; font-weight:500; }
 div[data-baseweb="input"] { background:#ffffff !important; border:1.5px solid var(--cinza) !important; border-radius:12px !important; box-shadow:none; }
@@ -291,6 +292,18 @@ def salvar_pergunta(usuario, pergunta, resposta, linhas, quando):
             "INSERT INTO perguntas (usuario, pergunta, resposta, linhas, criada_em) VALUES (?,?,?,?,?)",
             (usuario, pergunta, resposta, json.dumps(linhas, ensure_ascii=False), quando),
         )
+
+
+def deletar_pergunta(id_, usuario):
+    with conexao() as con:
+        con.execute("DELETE FROM perguntas WHERE id=? AND usuario=?", (id_, usuario))
+
+
+def deletar_pergunta_callback(id_):
+    deletar_pergunta(id_, st.session_state.usuario)
+    res = st.session_state.get("resultado")
+    if res and res.get("id") == id_:
+        st.session_state.resultado = None
 
 
 def listar_perguntas(usuario, limite=None):
@@ -609,57 +622,79 @@ def gerar_tabela_png(df):
 
 def gerar_grafico_png(d, dim, medida, forma, tipo):
     t_cat, t_val = rotulo_col(dim), rotulo_col(medida)
-    muitos_itens = len(d) > 8 and tipo == "cat"
+    muitos_itens = len(d) > 8 and tipo == "cat" and forma != "Setores"
     
     # Quebra textos longos para os eixos do gráfico
     d_plot = d.copy()
     d_plot['rot_clean'] = d_plot['rot'].astype(str).apply(lambda x: "\n".join(textwrap.wrap(x, width=45)))
 
-    if muitos_itens:
+    if forma == "Setores":
+        fig, ax = plt.subplots(figsize=(8.0, 6.0), dpi=200)
+        fig.patch.set_facecolor('#FBF9F4')
+        ax.set_facecolor('#FFFFFF')
+        
+        d_top = d_plot.head(10) if len(d_plot) > 10 else d_plot
+        cores = ['#42205A', '#C9AD7A', '#D8C3EE', '#7A5299', '#E5D5B5', '#A381C6', '#8F784D', '#5E347D', '#B59862', '#C9D0DA']
+        
+        wedges, texts, autotexts = ax.pie(
+            d_top['val'], 
+            labels=d_top['rot_clean'], 
+            autopct='%1.1f%%',
+            startangle=140,
+            colors=cores[:len(d_top)],
+            textprops=dict(color="#42205A", fontsize=8.5, fontweight='bold'),
+            pctdistance=0.75,
+            wedgeprops=dict(width=0.4, edgecolor='#FBF9F4', linewidth=2)
+        )
+        for autotext in autotexts:
+            autotext.set_color('#FFFFFF')
+            autotext.set_fontsize(8)
+            autotext.set_fontweight('bold')
+            
+        ax.set_title(f"{t_val} por {t_cat}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
+    elif muitos_itens:
         fig_h = max(5.0, len(d_plot) * 0.8)
         fig_w = 12.0
         fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=200)
+        fig.patch.set_facecolor('#FBF9F4')
+        ax.set_facecolor('#FFFFFF')
     else:
         fig, ax = plt.subplots(figsize=(10.0, 5.5), dpi=200)
-        
-    fig.patch.set_facecolor('#FBF9F4')
-    ax.set_facecolor('#FFFFFF')
-    
+        fig.patch.set_facecolor('#FBF9F4')
+        ax.set_facecolor('#FFFFFF')
+
     if forma == "Linhas":
         ax.plot(d_plot['rot_clean'], d_plot['val'], color='#42205A', marker='o', markerfacecolor='#C9AD7A', linewidth=2.5, markersize=6)
         ax.tick_params(axis='x', rotation=45 if len(d_plot) > 6 else 0)
-    elif muitos_itens:
-        bars = ax.barh(d_plot['rot_clean'], d_plot['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, height=0.6)
-        
-        max_val = d_plot['val'].max() if not d_plot['val'].empty else 1
-        ax.set_xlim(0, max_val * 1.18)
-        
-        for bar in bars:
-            w = bar.get_width()
-            ax.annotate(f'{w:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.'),
-                        xy=(w, bar.get_y() + bar.get_height() / 2),
-                        xytext=(6, 0), textcoords="offset points", ha='left', va='center', fontsize=8.5, color='#42205A', fontweight='bold')
-    else:
-        bars = ax.bar(d_plot['rot_clean'], d_plot['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, width=0.55)
-        
-        max_val = d_plot['val'].max() if not d_plot['val'].empty else 1
-        ax.set_ylim(0, max_val * 1.15)
-        
-        for bar in bars:
-            height = bar.get_height()
-            ax.annotate(f'{height:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.'),
-                        xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 4), textcoords="offset points", ha='center', va='bottom', fontsize=8.5, color='#42205A', fontweight='bold')
-        ax.tick_params(axis='x', rotation=45 if len(d_plot) > 6 else 0)
-                        
-    ax.set_title(f"{t_val} por {t_cat}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
-    if muitos_itens:
-        ax.set_xlabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
-        ax.grid(axis='x', linestyle='--', alpha=0.5, color='#C9D0DA')
-    else:
+        ax.set_title(f"{t_val} por {t_cat}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
         ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
         ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
-    
+    elif forma == "Barras":
+        if muitos_itens:
+            bars = ax.barh(d_plot['rot_clean'], d_plot['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, height=0.6)
+            max_val = d_plot['val'].max() if not d_plot['val'].empty else 1
+            ax.set_xlim(0, max_val * 1.18)
+            for bar in bars:
+                w = bar.get_width()
+                ax.annotate(f'{w:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.'),
+                            xy=(w, bar.get_y() + bar.get_height() / 2),
+                            xytext=(6, 0), textcoords="offset points", ha='left', va='center', fontsize=8.5, color='#42205A', fontweight='bold')
+            ax.set_xlabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
+            ax.grid(axis='x', linestyle='--', alpha=0.5, color='#C9D0DA')
+        else:
+            bars = ax.bar(d_plot['rot_clean'], d_plot['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, width=0.55)
+            max_val = d_plot['val'].max() if not d_plot['val'].empty else 1
+            ax.set_ylim(0, max_val * 1.15)
+            for bar in bars:
+                height = bar.get_height()
+                ax.annotate(f'{height:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.'),
+                            xy=(bar.get_x() + bar.get_width() / 2, height),
+                            xytext=(0, 4), textcoords="offset points", ha='center', va='bottom', fontsize=8.5, color='#42205A', fontweight='bold')
+            ax.tick_params(axis='x', rotation=45 if len(d_plot) > 6 else 0)
+            ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
+            ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
+        ax.set_title(f"{t_val} por {t_cat}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
+
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=200)
     plt.close(fig)
@@ -673,8 +708,9 @@ def grafico(info):
     c1, c2 = st.columns([3, 2])
     medida = c1.selectbox("Valor exibido", medidas, format_func=rotulo_col) if len(medidas) > 1 else medidas[0]
     d, tipo = series[medida]["df"].copy(), series[medida]["tipo"]
-    formas = ["Linhas", "Barras"] if tipo in ("tempo", "ordem") else ["Barras"]
-    forma = c2.radio("Tipo de gráfico", formas, horizontal=True) if len(formas) > 1 else formas[0]
+    
+    formas = ["Barras", "Linhas", "Setores"]
+    forma = c2.radio("Tipo de gráfico", formas, horizontal=True)
 
     if series[medida]["agregado"]:
         st.markdown(f"<div class='nota'>Valores somados por {esc(rotulo_col(dim).lower())}.</div>", unsafe_allow_html=True)
@@ -701,6 +737,13 @@ def grafico(info):
         graf = alt.Chart(d).mark_line(
             color=ROXO, strokeWidth=2.5, point=alt.OverlayMarkDef(color=DOURADO, stroke=ROXO, filled=True, size=70)
         ).encode(x=x, y=alt.Y("val:Q", title=t_val, axis=eixo_y), tooltip=tip).properties(height=380)
+    elif forma == "Setores":
+        graf = alt.Chart(d).mark_arc(innerRadius=50, stroke="#fff").encode(
+            theta=alt.Theta(field="val", type="quantitative"),
+            color=alt.Color(field="rot", type="nominal", title=t_cat,
+                            scale=alt.Scale(scheme="purples")),
+            tooltip=tip
+        ).properties(height=380)
     elif tipo == "cat" and (len(d) > 8 or d["rot"].str.len().max() > 16):
         graf = alt.Chart(d).mark_bar(color=ROXO, cornerRadiusEnd=4, size=18).encode(
             y=alt.Y("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelLimit=300, domain=False, ticks=False)),
@@ -768,6 +811,7 @@ def abrir_pergunta(id_):
         p = con.execute("SELECT * FROM perguntas WHERE id=? AND usuario=?", (id_, st.session_state.usuario)).fetchone()
     if p:
         st.session_state.resultado = {
+            "id": p["id"],
             "pergunta": p["pergunta"], "resposta": p["resposta"],
             "linhas": json.loads(p["linhas"] or "[]"), "quando": p["criada_em"],
         }
@@ -836,8 +880,10 @@ def menu_lateral():
         if not perguntas:
             st.markdown("<div class='side-vazio'>Suas perguntas aparecerão aqui.</div>", unsafe_allow_html=True)
         for p in perguntas:
-            texto = p["pergunta"] if len(p["pergunta"]) <= 28 else p["pergunta"][:27] + "…"
-            st.button(f"💬 {texto}", key=f"hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), **ESTICAR)
+            texto = p["pergunta"] if len(p["pergunta"]) <= 22 else p["pergunta"][:21] + "…"
+            c_p, c_del = st.columns([0.82, 0.18], vertical_alignment="center")
+            c_p.button(f"💬 {texto}", key=f"hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), use_container_width=True)
+            c_del.button("🗑️", key=f"del_side_{p['id']}", help="Excluir consulta", on_click=deletar_pergunta_callback, args=(p["id"],), use_container_width=True)
         
         tot = total_perguntas(st.session_state.usuario)
         if tot > 0:
@@ -996,11 +1042,7 @@ def pagina_consulta():
         pergunta = c1.text_input("Sua pergunta", key="consulta_pergunta", placeholder="Digite sua pergunta sobre os dados")
         
         enviar = c2.form_submit_button("Perguntar", type="primary", **ESTICAR_FORM)
-        limpar = c3.form_submit_button("✖", help="Limpar texto da busca", **ESTICAR_FORM)
-
-    if limpar:
-        limpar_busca()
-        st.rerun()
+        c3.form_submit_button("✖", help="Limpar texto da busca", on_click=limpar_busca, **ESTICAR_FORM)
 
     if enviar:
         pergunta = pergunta.strip()
@@ -1016,7 +1058,12 @@ def pagina_consulta():
                 quando = datetime.now().isoformat(timespec="seconds")
                 resposta, linhas = saida.get("resposta"), saida.get("linhas") or []
                 salvar_pergunta(st.session_state.usuario, pergunta, resposta, linhas, quando)
-                st.session_state.resultado = {"pergunta": pergunta, "resposta": resposta, "linhas": linhas, "quando": quando}
+                
+                with conexao() as con:
+                    p_last = con.execute("SELECT id FROM perguntas WHERE usuario=? ORDER BY id DESC LIMIT 1", (st.session_state.usuario,)).fetchone()
+                    new_id = p_last["id"] if p_last else None
+                
+                st.session_state.resultado = {"id": new_id, "pergunta": pergunta, "resposta": resposta, "linhas": linhas, "quando": quando}
                 st.rerun()
 
     if st.session_state.get("resultado"):
@@ -1060,8 +1107,9 @@ def pagina_historico():
             f"</div>",
             unsafe_allow_html=True
         )
-        if st.button("🔍 Abrir esta consulta completa", key=f"abrir_hist_{p['id']}"):
-            abrir_pergunta(p["id"])
+        c_abrir, c_del = st.columns([3, 1])
+        c_abrir.button("🔍 Abrir esta consulta completa", key=f"abrir_hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), use_container_width=True)
+        c_del.button("🗑️ Excluir consulta", key=f"del_hist_{p['id']}", on_click=deletar_pergunta_callback, args=(p["id"],), use_container_width=True)
 
 
 def pagina_perfil():
