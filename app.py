@@ -60,112 +60,218 @@ PRIM = [
 ]
 
 CSS = """<style>
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800&family=Poppins:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Cinzel:wght@600;700&display=swap');
 
 :root { 
     --roxo:#42205A; 
+    --roxo-hover:#311644;
     --dourado:#C9AD7A; 
-    --cinza:#C9D0DA; 
-    --fundo:#FBF9F4; 
-    --lilas:#D8C3EE;
-    --texto:#2B2B2B; 
-    --mudo:rgba(66,32,90,.66); 
-    --borda:rgba(201,208,218,.85); 
+    --cinza:#E5E8EB; 
+    --fundo:#F8F9FA; 
+    --lilas:#E8DFFA;
+    --texto:#1E1E24; 
+    --mudo:#667085; 
+    --borda:#EAECF0; 
+    --sombra: 0 4px 20px -2px rgba(16, 24, 40, 0.05);
 }
 
+/* Remoção das setas nativas do Streamlit na Sidebar e desativação do controle */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="collapsedControl"] {
+    display: none !important;
+}
+
+/* Background & Tipografia Geral Gemini-style */
 .stApp { background-color:var(--fundo) !important; color:var(--texto) !important; }
-.stApp, .stApp p, .stApp label, .stApp input, .stApp button, .stApp li, .stApp td, .stApp th, .stApp textarea { font-family:'Poppins',sans-serif; }
+.stApp, .stApp p, .stApp label, .stApp input, .stApp button, .stApp li, .stApp td, .stApp th, .stApp textarea { 
+    font-family:'Plus Jakarta Sans', sans-serif !important; 
+}
 [data-testid="stToolbar"], [data-testid="stDecoration"], footer, [data-testid="InputInstructions"] { display:none !important; }
 [data-testid="stHeader"] { background:transparent !important; }
-.block-container { max-width:1180px; padding-top:2rem; padding-bottom:3rem; }
+.block-container { max-width:1100px; padding-top:1rem; padding-bottom:4rem; }
 
-.h1 { font-family:'Cinzel',serif; font-weight:800; font-size:2rem; line-height:1.2; color:var(--roxo) !important; margin:0; }
-.h1::after { content:""; display:block; width:44px; height:3px; border-radius:2px; background:var(--dourado); margin-top:.7rem; }
-.h2 { font-family:'Cinzel',serif; font-weight:700; font-size:1.25rem; color:var(--roxo) !important; margin:0 0 .2rem; }
-.mudo { color:var(--mudo) !important; font-size:.95rem; line-height:1.6; margin:.7rem 0 1.4rem; }
-.rot { color:var(--mudo) !important; font-size:.85rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; margin:1.6rem 0 .5rem; }
-.pergunta { font-family:'Cinzel',serif; font-weight:700; font-size:1.4rem; line-height:1.35; color:var(--roxo) !important; margin:1.2rem 0 .6rem; word-break:break-word; }
-.chip { display:inline-block; background:rgba(216,195,238,.5); color:var(--roxo) !important; border-radius:999px; padding:.2rem .85rem; font-size:.8rem; font-weight:500; margin:0 .4rem .6rem 0; }
+/* Títulos Clean e Elegantes */
+.h1 { font-weight:800; font-size:2rem; line-height:1.25; color:var(--roxo) !important; margin:0; letter-spacing:-0.02em; }
+.h1::after { content:""; display:block; width:36px; height:3px; border-radius:10px; background:var(--dourado); margin-top:.7rem; }
+.h2 { font-weight:700; font-size:1.15rem; color:var(--roxo) !important; margin:0 0 .25rem; letter-spacing:-0.01em; }
+.mudo { color:var(--mudo) !important; font-size:.92rem; line-height:1.6; margin:.4rem 0 1.4rem; }
+.rot { color:var(--mudo) !important; font-size:.78rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; margin:1.8rem 0 .65rem; }
+.pergunta { font-weight:700; font-size:1.3rem; line-height:1.35; color:var(--texto) !important; margin:1.4rem 0 .65rem; word-break:break-word; letter-spacing:-0.01em; }
+.chip { display:inline-block; background:#F2EEFB; color:var(--roxo) !important; border-radius:100px; padding:.25rem .85rem; font-size:.78rem; font-weight:600; margin:0 .4rem .8rem 0; border:1px solid rgba(66,32,90,.08); }
 
-.st-key-resposta { background:#fff !important; border:1.5px solid var(--dourado) !important; border-left:6px solid var(--roxo) !important; border-radius:14px; padding:1.4rem 1.6rem; box-shadow:0 4px 12px rgba(66,32,90,.08); margin-bottom:1.2rem; }
-.st-key-resposta [data-testid="stMarkdownContainer"] :is(p, li, h1, h2, h3, h4, h5, h6, strong, em, span, a):not(.bot-nome) { font-family:'Poppins',sans-serif !important; text-transform:none !important; letter-spacing:normal !important; font-variant:normal !important; }
-.st-key-resposta [data-testid="stMarkdownContainer"] :is(p, li, h1, h2, h3, h4, h5, h6) { font-size:1.08rem !important; font-weight:400 !important; line-height:1.85 !important; color:var(--texto) !important; margin:0 0 .75rem !important; padding:0 !important; }
-.st-key-resposta [data-testid="stMarkdownContainer"] :is(strong, b) { font-weight:600 !important; color:var(--roxo) !important; }
+/* Card da Resposta com Visual Gemini AI */
+.st-key-resposta { 
+    background:#ffffff !important; 
+    border:1px solid var(--borda) !important; 
+    border-radius:20px !important; 
+    padding:1.8rem 2rem !important; 
+    box-shadow:var(--sombra) !important; 
+    margin-bottom:1.5rem !important; 
+}
+.st-key-resposta [data-testid="stMarkdownContainer"] :is(p, li, h1, h2, h3, h4, h5, h6, strong, em, span, a):not(.bot-nome) { 
+    font-family:'Plus Jakarta Sans',sans-serif !important; 
+    text-transform:none !important; 
+    letter-spacing:normal !important; 
+}
+.st-key-resposta [data-testid="stMarkdownContainer"] :is(p, li, h1, h2, h3, h4, h5, h6) { 
+    font-size:1.02rem !important; 
+    font-weight:400 !important; 
+    line-height:1.8 !important; 
+    color:var(--texto) !important; 
+    margin:0 0 .85rem !important; 
+}
+.st-key-resposta [data-testid="stMarkdownContainer"] :is(strong, b) { font-weight:700 !important; color:var(--roxo) !important; }
 
-.bot-header { display:flex; align-items:center; gap:10px; margin-bottom:1rem; border-bottom:1px solid rgba(201,208,218,.5); padding-bottom:.6rem; }
-.bot-header img { width:30px; height:30px; border-radius:50%; }
-.bot-header .bot-nome { font-family:'Cinzel',serif; font-weight:700; font-size:1.1rem; color:var(--roxo) !important; }
+.bot-header { display:flex; align-items:center; gap:12px; margin-bottom:1.2rem; border-bottom:1px solid var(--borda); padding-bottom:.75rem; }
+.bot-header img { width:32px; height:32px; border-radius:50%; }
+.bot-header .bot-nome { font-weight:700; font-size:1.05rem; color:var(--roxo) !important; letter-spacing:-0.01em; }
 
-.vazio { background:#fff !important; border:1px dashed var(--cinza) !important; border-radius:16px; padding:2rem 2.2rem; margin-top:1.6rem; }
-.vazio .h2 { margin-bottom:.6rem; }
-.dica { color:var(--texto) !important; font-size:.95rem; line-height:1.6; padding-left:1.3rem; position:relative; margin:.5rem 0; }
-.dica::before { content:""; position:absolute; left:0; top:.62em; width:.5rem; height:.5rem; border-radius:50%; background:var(--dourado); }
-.troca { color:var(--mudo) !important; font-size:.9rem; text-align:center; margin:1.2rem 0 .5rem; }
+/* Estados Vazios e Cards Informativos */
+.vazio { background:#ffffff !important; border:1px solid var(--borda) !important; border-radius:20px; padding:2.5rem; margin-top:1.5rem; box-shadow:var(--sombra); }
+.vazio .h2 { margin-bottom:.8rem; }
+.dica { color:var(--mudo) !important; font-size:.95rem; line-height:1.65; padding-left:1.4rem; position:relative; margin:.6rem 0; }
+.dica::before { content:""; position:absolute; left:0; top:.65em; width:.45rem; height:.45rem; border-radius:50%; background:var(--dourado); }
+.troca { color:var(--mudo) !important; font-size:.9rem; text-align:center; margin:1.5rem 0 .5rem; }
 
-.hist-card { background:#fff !important; border:1px solid var(--borda) !important; border-radius:14px; padding:1.2rem 1.4rem; margin-bottom:1rem; box-shadow:0 2px 6px rgba(66,32,90,.04); }
-.hist-pergunta { font-family:'Cinzel',serif; font-weight:700; font-size:1.1rem; color:var(--roxo) !important; margin-bottom:.3rem; }
-.hist-data { font-size:.78rem; color:var(--mudo) !important; margin-bottom:.6rem; }
-.hist-resposta { font-size:.92rem; color:var(--texto) !important; line-height:1.5; background:var(--fundo); padding:.8rem 1rem; border-radius:8px; border-left:3px solid var(--dourado); margin-bottom:.8rem; }
+/* Histórico Cards */
+.hist-card { background:#ffffff !important; border:1px solid var(--borda) !important; border-radius:18px; padding:1.4rem 1.6rem; margin-bottom:1rem; box-shadow:var(--sombra); transition:transform .15s ease; }
+.hist-pergunta { font-weight:700; font-size:1.05rem; color:var(--roxo) !important; margin-bottom:.3rem; letter-spacing:-0.01em; }
+.hist-data { font-size:.78rem; color:var(--mudo) !important; margin-bottom:.75rem; font-weight:500; }
+.hist-resposta { font-size:.92rem; color:var(--texto) !important; line-height:1.6; background:var(--fundo); padding:1rem 1.2rem; border-radius:12px; border:1px solid var(--borda); margin-bottom:.8rem; }
 
-[data-testid="stWidgetLabel"] p { color:var(--roxo) !important; font-size:.85rem; font-weight:500; }
-div[data-baseweb="input"] { background:#ffffff !important; border:1.5px solid var(--cinza) !important; border-radius:12px !important; box-shadow:none; }
-div[data-baseweb="input"]:focus-within { border-color:var(--roxo) !important; box-shadow:0 0 0 3px rgba(216,195,238,.7); }
+/* Inputs e Formulários */
+[data-testid="stWidgetLabel"] p { color:var(--mudo) !important; font-size:.82rem; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; }
+div[data-baseweb="input"] { background:#ffffff !important; border:1px solid var(--borda) !important; border-radius:14px !important; box-shadow:0 1px 2px rgba(16, 24, 40, 0.05); transition:all 0.2s ease; }
+div[data-baseweb="input"]:focus-within { border-color:var(--roxo) !important; box-shadow:0 0 0 4px rgba(66,32,90,0.08) !important; }
 div[data-baseweb="base-input"] { background:transparent !important; }
-[data-testid="stTextInput"] input { background:#ffffff !important; height:3rem; font-size:.98rem; color:#2B2B2B !important; padding-left:1rem; }
-[data-testid="stTextInput"] input::placeholder { color:#8a8f98 !important; }
-[data-testid="stForm"] { background:#ffffff !important; border:1px solid var(--borda) !important; border-radius:16px; padding:1.4rem 1.5rem; box-shadow:0 1px 3px rgba(66,32,90,.05), 0 8px 24px rgba(66,32,90,.05); }
+[data-testid="stTextInput"] input { background:#ffffff !important; height:3.1rem; font-size:.98rem; color:var(--texto) !important; padding-left:1.1rem; }
+[data-testid="stTextInput"] input::placeholder { color:#98A2B3 !important; }
+[data-testid="stForm"] { background:#ffffff !important; border:1px solid var(--borda) !important; border-radius:24px; padding:1.6rem; box-shadow:var(--sombra); }
 
 [data-testid="stExpander"] { display:none !important; }
 
-.stButton button, [data-testid="stFormSubmitButton"] button, [data-testid="stDownloadButton"] button { border-radius:12px; height:3rem; border:1.5px solid var(--roxo); background:#fff !important; transition:all .15s ease; }
-.stButton button p, [data-testid="stFormSubmitButton"] button p, [data-testid="stDownloadButton"] button p { color:var(--roxo) !important; font-weight:600; font-size:.95rem; }
-.stButton button:hover, [data-testid="stFormSubmitButton"] button:hover, [data-testid="stDownloadButton"] button:hover { background:rgba(216,195,238,.45) !important; border-color:var(--roxo); }
-{{PRIM}} { background:var(--roxo) !important; border-color:var(--roxo) !important; }
-{{PRIM_P}} { color:var(--dourado) !important; }
-{{PRIM_H}} { background:#55306f !important; }
+/* Botões Modernos */
+.stButton button, [data-testid="stFormSubmitButton"] button, [data-testid="stDownloadButton"] button { 
+    border-radius:12px; 
+    height:2.8rem; 
+    border:1px solid var(--borda); 
+    background:#ffffff !important; 
+    transition:all .18s cubic-bezier(0.4, 0, 0.2, 1); 
+    box-shadow:0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.stButton button p, [data-testid="stFormSubmitButton"] button p, [data-testid="stDownloadButton"] button p { color:var(--texto) !important; font-weight:600; font-size:.88rem; }
+.stButton button:hover, [data-testid="stFormSubmitButton"] button:hover, [data-testid="stDownloadButton"] button:hover { background:#F9F8FD !important; border-color:var(--roxo); }
+{{PRIM}} { background:var(--roxo) !important; border-color:var(--roxo) !important; box-shadow:0 2px 5px rgba(66,32,90,0.18) !important; }
+{{PRIM_P}} { color:#ffffff !important; font-weight:600 !important; }
+{{PRIM_H}} { background:var(--roxo-hover) !important; border-color:var(--roxo-hover) !important; }
 
-.tabela-wrap { overflow:auto; max-height:520px; background:#fff !important; border:1px solid var(--borda); border-radius:12px; margin:.8rem 0 1rem; box-shadow:0 1px 3px rgba(66,32,90,.05); }
+/* Foto do Perfil Aumentada */
+.perfil-foto-circulo {
+    width: 42px !important;
+    height: 42px !important;
+    border-radius: 50% !important;
+    object-fit: cover !important;
+    border: 2px solid var(--dourado) !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+    margin: 0 !important;
+    display: block !important;
+}
+
+.box-foto-alinha {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 100% !important;
+}
+
+/* Botão de Histórico com Destaque Discreto */
+.btn-historico button {
+    background: #F4EFFB !important;
+    border: 1px solid var(--lilas) !important;
+}
+.btn-historico button p {
+    color: var(--roxo) !important;
+    font-weight: 700 !important;
+}
+.btn-historico button:hover {
+    background: #E8DFFA !important;
+}
+
+/* Botão de Sair com Ícone */
+.btn-sair-icone button {
+    border: 1px solid var(--borda) !important;
+    background: #ffffff !important;
+    border-radius: 12px !important;
+    padding: 0 0.6rem !important;
+    transition: all 0.2s ease !important;
+}
+.btn-sair-icone button:hover {
+    background: #FEF2F2 !important;
+    border-color: #FCA5A5 !important;
+}
+.btn-sair-icone button p {
+    color: #344054 !important;
+    font-size: 1.1rem !important;
+}
+.btn-sair-icone button:hover p {
+    color: #D92D20 !important;
+}
+
+/* Ajustes no Menu Lateral */
+section[data-testid="stSidebar"] { 
+    background:#ffffff !important; 
+    border-right:1px solid var(--borda); 
+    width:310px !important; 
+    min-width:310px !important; 
+}
+[data-testid="stSidebar"] .stButton button[kind="secondary"] { 
+    border:none; 
+    background:transparent !important; 
+    height:auto; 
+    padding:.55rem .65rem; 
+    justify-content:flex-start; 
+    text-align:left; 
+    border-radius:10px; 
+    box-shadow:none; 
+}
+[data-testid="stSidebar"] .stButton button[kind="secondary"]:hover { background:#F4EFFB !important; }
+
+/* Formatação de 1 linha única para perguntas recentes */
+.item-recente button p {
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    display: block !important;
+    max-width: 175px !important;
+}
+
+/* Tabela Estilizada Clean */
+.tabela-wrap { overflow:auto; max-height:520px; background:#ffffff !important; border:1px solid var(--borda); border-radius:16px; margin:1rem 0 1.2rem; box-shadow:var(--sombra); }
 .tabela { width:100%; border-collapse:separate; border-spacing:0; font-size:.88rem; }
-.tabela th { position:sticky; top:0; z-index:1; background:var(--roxo) !important; color:var(--dourado) !important; text-align:left; font-weight:600; padding:.8rem 1.1rem; white-space:nowrap; }
-.tabela td { padding:.7rem 1.1rem; border-bottom:1px solid rgba(201,208,218,.5); color:var(--texto) !important; }
-.tabela tbody tr:nth-child(even) td { background:var(--fundo) !important; }
-.tabela tbody tr:hover td { background:rgba(216,195,238,.35) !important; }
+.tabela th { position:sticky; top:0; z-index:1; background:#FAF9FC !important; color:var(--roxo) !important; text-align:left; font-weight:700; padding:.9rem 1.2rem; white-space:nowrap; border-bottom:1px solid var(--borda); }
+.tabela td { padding:.8rem 1.2rem; border-bottom:1px solid var(--borda); color:var(--texto) !important; }
+.tabela tbody tr:nth-child(even) td { background:#FCFCFD !important; }
+.tabela tbody tr:hover td { background:#F4EFFB !important; }
 .tabela tbody tr:last-child td { border-bottom:none; }
 .tabela .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .tabela a { color: var(--roxo) !important; font-weight: 600; text-decoration: underline; }
 .tabela a:hover { color: var(--dourado) !important; }
 
-.painel { background:var(--roxo) !important; border-radius:20px; padding:2.6rem 2.4rem; min-height:640px; display:flex; flex-direction:column; justify-content:center; gap:1.7rem; }
-.painel-logo { background:var(--fundo) !important; border-radius:14px; border-bottom:4px solid var(--dourado); padding:1.2rem 1.5rem; max-width:340px; text-align:center; margin:0 auto; }
-.painel-t { font-family:'Cinzel',serif; font-weight:700; font-size:1.8rem; line-height:1.3; color:#fff !important; }
-.painel-p { color:var(--lilas) !important; font-size:1rem; line-height:1.7; max-width:38ch; }
-.painel-i { color:#fff !important; font-size:.95rem; padding-left:1.4rem; position:relative; margin:.55rem 0; }
-.painel-i::before { content:""; position:absolute; left:0; top:.6em; width:.55rem; height:.55rem; border-radius:50%; background:var(--dourado); }
+/* Painel Lateral de Entrada (Login/Cadastro) */
+.painel { background:linear-gradient(145deg, #42205A 0%, #2A133B 100%) !important; border-radius:28px; padding:3rem 2.5rem; min-height:640px; display:flex; flex-direction:column; justify-content:center; gap:1.8rem; box-shadow:0 12px 32px rgba(66,32,90,0.18); }
+.painel-logo { background:#ffffff !important; border-radius:18px; border-bottom:4px solid var(--dourado); padding:1.2rem 1.8rem; max-width:340px; text-align:center; margin:0 auto; box-shadow:0 8px 16px rgba(0,0,0,0.12); }
+.painel-t { font-weight:800; font-size:1.85rem; line-height:1.28; color:#ffffff !important; letter-spacing:-0.02em; }
+.painel-p { color:var(--lilas) !important; font-size:1rem; line-height:1.7; max-width:38ch; opacity:0.95; }
+.painel-i { color:#ffffff !important; font-size:.95rem; padding-left:1.5rem; position:relative; margin:.65rem 0; font-weight:500; }
+.painel-i::before { content:""; position:absolute; left:0; top:.65em; width:.5rem; height:.5rem; border-radius:50%; background:var(--dourado); }
 
-.usuario { display:flex; align-items:center; justify-content:flex-end; gap:.7rem; color:var(--roxo) !important; font-weight:600; font-size:.95rem; }
-.avatar-img { width:2.5rem; height:2.5rem; border-radius:50%; object-fit:cover; border:2px solid var(--dourado); }
-.avatar-txt { width:2.5rem; height:2.5rem; border-radius:50%; background:var(--roxo) !important; color:var(--dourado) !important; display:inline-flex; align-items:center; justify-content:center; font-family:'Cinzel',serif; font-weight:700; font-size:1.1rem; }
-
-.perfil-card { background:#fff !important; border:1px solid var(--borda); border-radius:16px; padding:2rem 1.6rem; text-align:center; margin-bottom:1rem; box-shadow:0 1px 3px rgba(66,32,90,.05); }
-.perfil-avatar-lg { width:110px; height:110px; border-radius:50%; object-fit:cover; border:3px solid var(--dourado); margin:0 auto; display:block; }
-.perfil-nome { font-family:'Cinzel',serif; font-weight:700; font-size:1.4rem; color:var(--roxo) !important; margin-top:.8rem; }
-.perfil-user { color:var(--mudo) !important; font-size:.9rem; }
-.perfil-stat { margin-top:1.3rem; padding-top:1.1rem; border-top:1px solid var(--borda); color:var(--texto) !important; font-size:.92rem; }
-.perfil-stat b { color:var(--roxo) !important; font-size:1.4rem; display:block; }
-
-[data-testid="stSidebarCollapseButton"], [data-testid="stSidebarCollapsedControl"],
-[data-testid="stExpandSidebarButton"], [data-testid="collapsedControl"], [data-testid="stSidebarHeader"] { display:none !important; }
-section[data-testid="stSidebar"] { background:#fff !important; border-right:1px solid var(--borda); width:310px !important; min-width:310px !important; }
-[data-testid="stSidebar"] .stButton button[kind="secondary"] { border:none; background:transparent !important; height:auto; padding:.65rem .8rem; justify-content:flex-start; text-align:left; border-radius:10px; }
-[data-testid="stSidebar"] .stButton button[kind="secondary"]:hover { background:rgba(216,195,238,.45) !important; }
-
-/* Centralização do Container da Logo na Sidebar */
+/* Logo na Sidebar */
 .side-logo { 
     display: flex; 
     justify-content: center; 
     align-items: center; 
     text-align: center; 
-    padding: 0.5rem 0 1rem 0; 
+    padding: 0.6rem 0 1rem 0; 
     border-bottom: 1px solid var(--borda); 
     margin-bottom: 1rem; 
 }
@@ -174,32 +280,7 @@ section[data-testid="stSidebar"] { background:#fff !important; border-right:1px 
     display: block !important; 
 }
 
-/* Botão Minimalista para Ocultar Menu */
-.btn-ocultar {
-    margin-top: 0.5rem;
-    text-align: center;
-}
-.btn-ocultar button {
-    border: none !important;
-    background: transparent !important;
-    color: var(--mudo) !important;
-    font-size: 0.85rem !important;
-    font-weight: 500 !important;
-    height: auto !important;
-    padding: 0.4rem 0.8rem !important;
-    box-shadow: none !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    gap: 0.4rem !important;
-}
-.btn-ocultar button:hover {
-    color: var(--roxo) !important;
-    background: rgba(216, 195, 238, 0.25) !important;
-    border-radius: 8px !important;
-}
-
-.side-titulo { color:var(--mudo) !important; font-size:.8rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:0 .8rem; margin:1.2rem 0 .4rem; }
+.side-titulo { color:var(--mudo) !important; font-size:.72rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; padding:0 .6rem; margin:1.2rem 0 .4rem; }
 .side-linha { border:0; border-top:1px solid var(--borda); margin:1rem 0 .6rem; }
 </style>"""
 
@@ -393,16 +474,6 @@ def emblema_html(largura=28):
     return "🌿"
 
 
-def avatar_html(nome, foto_b64=None, tamanho=38):
-    if foto_b64:
-        return f"<img class='avatar-img' style='width:{tamanho}px; height:{tamanho}px; border-radius:50%; object-fit:cover; border:2px solid #C9AD7A;' src='data:image/png;base64,{foto_b64}'>"
-    b64_emblema = img_b64(EMBLEMA)
-    if b64_emblema:
-        return f"<img class='avatar-img' style='width:{tamanho}px; height:{tamanho}px; border-radius:50%; object-fit:cover; border:2px solid #C9AD7A;' src='data:image/png;base64,{b64_emblema}'>"
-    letra = nome[:1].upper() if nome else "U"
-    return f"<span class='avatar-txt' style='width:{tamanho}px; height:{tamanho}px; border-radius:50%; background:#42205A; color:#C9AD7A; display:inline-flex; align-items:center; justify-content:center; font-family:Cinzel,serif; font-weight:700;'>{esc(letra)}</span>"
-
-
 def esc(texto):
     return html.escape(str(texto)).replace("$", "&#36;")
 
@@ -523,7 +594,7 @@ def tabela_html(df):
                     valores_formatados.append("—")
                 elif str(c).lower() == "url_produto" or str(x).startswith("http"):
                     link = str(x)
-                    valores_formatados.append(f"<a href='{esc(link)}' target='_blank' rel='noopener noreferrer'>🔗 Acessar Produto</a>")
+                    valores_formatados.append(f"<a href='{esc(link)}' target='_blank' rel='noopener noreferrer'>Acessar Produto</a>")
                 else:
                     valores_formatados.append(esc(x))
             colunas.append(valores_formatados)
@@ -541,11 +612,9 @@ def tabela_html(df):
 def gerar_tabela_png(df):
     recorte = df.head(30).copy()
     
-    # 1. Limpa tags HTML
     for col in recorte.columns:
         recorte[col] = recorte[col].astype(str).apply(lambda x: re.sub(r'<[^>]*>', '', str(x)))
     
-    # 2. Aplica quebra de linha (permitindo quebrar URLs e palavras sem espaço)
     for col in recorte.columns:
         if 'url' in str(col).lower() or 'link' in str(col).lower():
             recorte[col] = recorte[col].apply(
@@ -560,7 +629,6 @@ def gerar_tabela_png(df):
     table_data = [col_names] + recorte.values.tolist()
     num_cols = len(recorte.columns)
 
-    # 3. Define larguras relativas inteligentes para as colunas
     col_widths = []
     for col in recorte.columns:
         c_lower = str(col).lower()
@@ -574,7 +642,6 @@ def gerar_tabela_png(df):
     total_w = sum(col_widths)
     col_widths = [w / total_w for w in col_widths]
 
-    # 4. Contagem exata de linhas de texto para altura proporcional
     row_line_counts = []
     for row in table_data:
         max_lines_in_row = max(str(cell).count('\n') + 1 for cell in row)
@@ -597,7 +664,6 @@ def gerar_tabela_png(df):
     )
     table.auto_set_font_size(False)
 
-    # 5. Ajusta altura e formatação de cada célula
     for row_idx, line_count in enumerate(row_line_counts):
         cell_height = (line_count / total_text_lines) * 0.92
         for col_idx in range(num_cols):
@@ -624,7 +690,6 @@ def gerar_grafico_png(d, dim, medida, forma, tipo):
     t_cat, t_val = rotulo_col(dim), rotulo_col(medida)
     muitos_itens = len(d) > 8 and tipo == "cat" and forma != "Setores"
     
-    # Quebra textos longos para os eixos do gráfico
     d_plot = d.copy()
     d_plot['rot_clean'] = d_plot['rot'].astype(str).apply(lambda x: "\n".join(textwrap.wrap(x, width=45)))
 
@@ -765,7 +830,7 @@ def grafico(info):
     col_dl1, col_dl2 = st.columns([1, 1])
     try:
         col_dl1.download_button(
-            "🖼️ Baixar Gráfico em PNG",
+            "Baixar Gráfico em PNG",
             data=gerar_grafico_png(d, dim, medida, forma, tipo),
             file_name="grafico_farmazids.png",
             mime="image/png"
@@ -776,7 +841,7 @@ def grafico(info):
     try:
         html_str = graf.to_html()
         col_dl2.download_button(
-            "📥 Baixar Gráfico (HTML Interativo)",
+            "Baixar Gráfico (HTML Interativo)",
             data=html_str,
             file_name="grafico_farmazids.html",
             mime="text/html"
@@ -794,7 +859,22 @@ def alternar_menu():
     st.session_state.menu_aberto = not st.session_state.get("menu_aberto", True)
 
 
-def sair():
+@st.dialog("Confirmar Saída")
+def modal_confirmar_saida():
+    st.write("Tem certeza que deseja sair da sua conta?")
+    c_sim, c_nao = st.columns(2)
+    if c_sim.button("Sim, Sair", type="primary", use_container_width=True):
+        sair_efetivo()
+        st.rerun()
+    if c_nao.button("Cancelar", use_container_width=True):
+        st.rerun()
+
+
+def solicitar_sair():
+    modal_confirmar_saida()
+
+
+def sair_efetivo():
     for k in ("usuario", "nome", "foto", "resultado"):
         st.session_state.pop(k, None)
     ir("login")
@@ -854,48 +934,70 @@ def tela_dividida():
 
 
 def topo():
-    aberto = st.session_state.get("menu_aberto", True)
-    c1, c2, c3 = st.columns([1, 4, 4], vertical_alignment="center")
+    # Barra Superior Centralizada Minimalista
+    c1, c2, c3 = st.columns([1, 4, 3.4], vertical_alignment="center")
+    
     with c1:
-        if not aberto:
-            st.button("☰", key="menu", on_click=alternar_menu)
+        st.button("☰", key="btn_toggle_menu", help="Alternar menu lateral", on_click=alternar_menu)
+        
     with c2:
-        if not aberto:
-            st.markdown(logo_html(180), unsafe_allow_html=True)
+        st.markdown(logo_html(190), unsafe_allow_html=True)
+        
     with c3:
-        nome = st.session_state.nome
+        nome = st.session_state.get("nome", "Usuário")
         foto = st.session_state.get("foto")
-        av_html = avatar_html(nome, foto, tamanho=38)
-        st.markdown(f"<div class='usuario'>{esc(nome)}{av_html}</div>", unsafe_allow_html=True)
+        
+        # Obtém a foto real ou o emblema padrão
+        raw_b64 = foto if foto else img_b64(EMBLEMA)
+        if raw_b64:
+            img_tag = f"<img class='perfil-foto-circulo' src='data:image/png;base64,{raw_b64}'>"
+        else:
+            letra = nome[:1].upper() if nome else "U"
+            img_tag = f"<div class='perfil-foto-circulo' style='background:#42205A; color:#C9AD7A; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:1rem;'>{letra}</div>"
+            
+        col_perfil_bloco, col_sair = st.columns([3.5, 1], vertical_alignment="center")
+        
+        with col_perfil_bloco:
+            col_foto, col_btn = st.columns([0.35, 0.65], vertical_alignment="center")
+            with col_foto:
+                st.markdown(f"<div class='box-foto-alinha'>{img_tag}</div>", unsafe_allow_html=True)
+            with col_btn:
+                st.button(nome, key="btn_topo_perfil", on_click=ir, args=("perfil",), use_container_width=True)
+            
+        with col_sair:
+            st.markdown("<div class='btn-sair-icone'>", unsafe_allow_html=True)
+            st.button("➔", key="btn_topo_sair", help="Sair da conta", on_click=solicitar_sair, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
 def menu_lateral():
     with st.sidebar:
-        # Logo no topo da barra lateral (centralizada)
-        st.markdown(f"<div class='side-logo'>{logo_html(200)}</div>", unsafe_allow_html=True)
-        st.button("➕ Nova consulta", key="nova", type="primary", on_click=nova_consulta, **ESTICAR)
+        st.markdown(f"<div class='side-logo'>{logo_html(180)}</div>", unsafe_allow_html=True)
+        st.button(" Nova consulta", key="nova", type="primary", on_click=nova_consulta, **ESTICAR)
         
         st.markdown("<div class='side-titulo'>Consultas recentes</div>", unsafe_allow_html=True)
         perguntas = listar_perguntas(st.session_state.usuario, limite=RECENTES_LIMIT)
         if not perguntas:
-            st.markdown("<div class='side-vazio'>Suas perguntas aparecerão aqui.</div>", unsafe_allow_html=True)
+            st.markdown("<div class='side-vazio' style='color:var(--mudo); font-size:0.85rem; padding: 0.5rem 0.8rem;'>Suas perguntas aparecerão aqui.</div>", unsafe_allow_html=True)
         for p in perguntas:
-            texto = p["pergunta"] if len(p["pergunta"]) <= 22 else p["pergunta"][:21] + "…"
-            c_p, c_del = st.columns([0.82, 0.18], vertical_alignment="center")
-            c_p.button(f"💬 {texto}", key=f"hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), use_container_width=True)
-            c_del.button("🗑️", key=f"del_side_{p['id']}", help="Excluir consulta", on_click=deletar_pergunta_callback, args=(p["id"],), use_container_width=True)
+            texto_bruto = p["pergunta"].strip()
+            c_p, c_del = st.columns([0.80, 0.20], vertical_alignment="center")
+            
+            st.markdown("<div class='item-recente'>", unsafe_allow_html=True)
+            c_p.button(texto_bruto, key=f"hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            c_del.button("×", key=f"del_side_{p['id']}", help="Excluir consulta", on_click=deletar_pergunta_callback, args=(p["id"],), use_container_width=True)
         
         tot = total_perguntas(st.session_state.usuario)
         if tot > 0:
-            st.button("📜 Histórico de consultas", key="ver_historico_completo", on_click=ir, args=("historico",), **ESTICAR)
+            st.button(" Histórico de consultas", key="ver_historico_completo", type="primary", on_click=ir, args=("historico",), **ESTICAR)
 
         st.markdown("<hr class='side-linha'>", unsafe_allow_html=True)
-        st.button("👤 Perfil", key="perfil", on_click=ir, args=("perfil",), **ESTICAR)
-        st.button("🚪 Sair", key="sair", on_click=sair, **ESTICAR)
+        st.button("Perfil", key="perfil", on_click=ir, args=("perfil",), **ESTICAR)
         
-        # Botão minimalista para ocultar menu
-        st.markdown("<div class='btn-ocultar'>", unsafe_allow_html=True)
-        st.button("« Ocultar menu", key="ocultar", on_click=alternar_menu, **ESTICAR)
+        st.markdown("<div class='btn-sair-icone'>", unsafe_allow_html=True)
+        st.button("Sair", key="sair", on_click=solicitar_sair, **ESTICAR)
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -994,7 +1096,7 @@ def mostrar_resultado(res):
         colunas_padrao = list(df.columns)
 
     colunas_selecionadas = st.multiselect(
-        "📋 Selecione as colunas para exibir na tabela:",
+        "Selecione as colunas para exibir na tabela:",
         options=list(df.columns),
         default=colunas_padrao,
         format_func=rotulo_col
@@ -1012,13 +1114,13 @@ def mostrar_resultado(res):
 
     col_tb1, col_tb2 = st.columns(2)
     col_tb1.download_button(
-        "📥 Baixar Tabela Completa (CSV)",
+        "Baixar Tabela Completa (CSV)",
         df.to_csv(index=False).encode("utf-8-sig"),
         file_name="consulta_farmazids.csv",
         mime="text/csv"
     )
     col_tb2.download_button(
-        "🖼️ Baixar Tabela Exibida em PNG",
+        "Baixar Tabela Exibida em PNG",
         data=gerar_tabela_png(df_exibicao),
         file_name="tabela_farmazids.png",
         mime="image/png"
@@ -1042,7 +1144,7 @@ def pagina_consulta():
         pergunta = c1.text_input("Sua pergunta", key="consulta_pergunta", placeholder="Digite sua pergunta sobre os dados")
         
         enviar = c2.form_submit_button("Perguntar", type="primary", **ESTICAR_FORM)
-        c3.form_submit_button("✖", help="Limpar texto da busca", on_click=limpar_busca, **ESTICAR_FORM)
+        c3.form_submit_button("×", help="Limpar texto da busca", on_click=limpar_busca, **ESTICAR_FORM)
 
     if enviar:
         pergunta = pergunta.strip()
@@ -1072,7 +1174,7 @@ def pagina_consulta():
         st.markdown(
             "<div class='vazio'><div class='h2'>Faça sua primeira pergunta</div>"
             "<div class='dica'>Seja específico: diga o que quer saber e sobre qual produto, categoria ou período.</div>"
-            "<div class='dica'>Peça rankings, comparações ou evolução ao longo do tempo para gerar também o gráfico.</div>"
+            "<div class='dica'>Peça comparações ou evolução ao longo do tempo para gerar também o gráfico.</div>"
             "<div class='dica'>Suas consultas recentes ficam no menu lateral para reabrir quando quiser.</div></div>",
             unsafe_allow_html=True,
         )
@@ -1096,20 +1198,18 @@ def pagina_historico():
             dt_fmt = dt_str
 
         resp_resumo = limpar_resposta(p["resposta"]) if p["resposta"] else "Consulta sem resposta textual gerada."
-        if len(resp_resumo) > 300:
-            resp_resumo = resp_resumo[:297] + "..."
 
         st.markdown(
             f"<div class='hist-card'>"
-            f"<div class='hist-pergunta'>💬 {esc(p['pergunta'])}</div>"
+            f"<div class='hist-pergunta'>{esc(p['pergunta'])}</div>"
             f"<div class='hist-data'>Realizada em {dt_fmt}</div>"
             f"<div class='hist-resposta'><b>Resposta resumida:</b><br>{esc(resp_resumo)}</div>"
             f"</div>",
             unsafe_allow_html=True
         )
         c_abrir, c_del = st.columns([3, 1])
-        c_abrir.button("🔍 Abrir esta consulta completa", key=f"abrir_hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), use_container_width=True)
-        c_del.button("🗑️ Excluir consulta", key=f"del_hist_{p['id']}", on_click=deletar_pergunta_callback, args=(p["id"],), use_container_width=True)
+        c_abrir.button("Abrir consulta completa", key=f"abrir_hist_{p['id']}", on_click=abrir_pergunta, args=(p["id"],), use_container_width=True)
+        c_del.button("Excluir", key=f"del_hist_{p['id']}", on_click=deletar_pergunta_callback, args=(p["id"],), use_container_width=True)
 
 
 def pagina_perfil():
@@ -1132,7 +1232,7 @@ def pagina_perfil():
             f"<div class='perfil-card'>{img_perfil}"
             f"<div class='perfil-nome'>{esc(st.session_state.nome)}</div>"
             f"<div class='perfil-user'>@{esc(st.session_state.usuario)}</div>"
-            f"<div class='perfil-stat'><b>{total}</b>consulta{'s' if total != 1 else ''} realizada{'s' if total != 1 else ''}</div></div>",
+            f"<div class='perfil-stat'><b>{total} </b>consulta{'s' if total != 1 else ''} realizada{'s' if total != 1 else ''}</div></div>",
             unsafe_allow_html=True,
         )
         
@@ -1147,14 +1247,16 @@ def pagina_perfil():
             st.rerun()
 
         if foto:
-            if st.button("🗑️ Remover foto de perfil", key="b_rem_foto", **ESTICAR):
+            if st.button("Remover foto de perfil", key="b_rem_foto", **ESTICAR):
                 remover_foto(st.session_state.usuario)
                 st.session_state.foto = None
                 st.success("Foto de perfil removida com sucesso!")
                 st.rerun()
 
         st.markdown("---")
-        st.button("Sair da conta", key="b_sair", on_click=sair, **ESTICAR)
+        st.markdown("<div class='btn-sair-icone'>", unsafe_allow_html=True)
+        st.button("Sair da conta", key="b_sair", on_click=solicitar_sair, **ESTICAR)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with dir_:
         with st.form("form_nome", border=True):
