@@ -21,6 +21,7 @@ import boto3
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -39,8 +40,47 @@ USUARIO_OK = re.compile(r"^[a-z0-9_.-]{3,30}$")
 RECENTES_LIMIT = 5    # Limite máximo de conversas no menu lateral
 MAX_LINHAS = 200      # Linhas exibidas na tabela da tela
 
-# Paleta de Cores Farmazids
+# Paleta de Cores Farmazids e Mapeamento Específico de Farmácias
 ROXO, DOURADO, CINZA, FUNDO, LILAS = "#42205A", "#C9AD7A", "#C9D0DA", "#FBF9F4", "#D8C3EE"
+
+FARMA_CORES = {
+    "veracruz": "#DC2626",      # Vermelho
+    "farmaponte": "#2563EB",    # Azul
+    "farmazids": "#42205A",     # Roxo Farmazids
+}
+CORES_EXTRA = ["#10B981", "#F97316", "#C9AD7A", "#0D9488", "#6366F1", "#EC4899", "#8B5CF6"]
+
+
+def cor_farmacia(nome_farmacia):
+    if not nome_farmacia:
+        return None
+    s = str(nome_farmacia).strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+    for key, color in FARMA_CORES.items():
+        if key in s:
+            return color
+    return None
+
+
+def mapa_cores_farmacias(lista_farmacias):
+    domain = []
+    range_colors = []
+    idx_extra = 0
+    for f in lista_farmacias:
+        domain.append(f)
+        c = cor_farmacia(f)
+        if not c:
+            c = CORES_EXTRA[idx_extra % len(CORES_EXTRA)]
+            idx_extra += 1
+        range_colors.append(c)
+    return domain, range_colors
+
+
+def fmt_br(val):
+    if val is None or np.isnan(val):
+        return "—"
+    if abs(val) >= 1000:
+        return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{val:,.2f}".replace(".", ",")
 
 
 def _esticar(fn):
@@ -528,7 +568,7 @@ def como_data(s):
     return d if d.notna().all() else None
 
 
-ADITIVA = re.compile(r"(quant|qtd|total|venda|valor|unidade|receita|faturamento|soma)", re.I)
+ADITIVA = re.compile(r"(quant|qtd|total|venda|valor|unidade|receita|faturamento|soma|preco|preço)", re.I)
 
 
 def _dimensao(c, s, ja_numerica):
@@ -545,29 +585,63 @@ def _dimensao(c, s, ja_numerica):
 def analisar(df):
     if len(df) < 2:
         return None
+
+    # Detecta se há coluna de farmácia no DataFrame
+    col_farmacia = None
+    for c in df.columns:
+        if re.search(r"(farmacia|farmácia|drogaria|estabelecimento|loja)", str(c), re.I):
+            col_farmacia = c
+            break
+
     nums = colunas_numericas(df)
     for c in df.columns:
         series = {}
         for m in nums:
             if m == c:
                 continue
-            sub = pd.DataFrame({"cat": nums[c] if c in nums else df[c], "val": nums[m]}).dropna()
+            
+            if col_farmacia and col_farmacia != c and col_farmacia != m:
+                sub = pd.DataFrame({
+                    "cat": nums[c] if c in nums else df[c],
+                    "farmacia": df[col_farmacia],
+                    "val": nums[m]
+                }).dropna()
+            else:
+                sub = pd.DataFrame({
+                    "cat": nums[c] if c in nums else df[c],
+                    "val": nums[m]
+                }).dropna()
+
             if len(sub) < 2:
                 continue
             tipo, cat = _dimensao(c, sub["cat"], c in nums)
             if tipo is None:
                 continue
             sub["cat"] = cat
-            agregado = not sub["cat"].is_unique
-            if agregado:
-                if not ADITIVA.search(str(m)):
-                    continue
-                sub = sub.groupby("cat", as_index=False, sort=False)["val"].sum()
-            if not (2 <= len(sub) <= 120) or (tipo == "cat" and len(sub) > 60):
+
+            if "farmacia" in sub.columns:
+                if sub.duplicated(subset=["cat", "farmacia"]).any():
+                    sub = sub.groupby(["cat", "farmacia"], as_index=False, sort=False)["val"].sum()
+            else:
+                agregado = not sub["cat"].is_unique
+                if agregado:
+                    if not ADITIVA.search(str(m)):
+                        continue
+                    sub = sub.groupby("cat", as_index=False, sort=False)["val"].sum()
+
+            if not (2 <= len(sub) <= 350) or (tipo == "cat" and len(sub) > 180):
                 continue
-            series[m] = {"df": sub, "tipo": tipo, "agregado": agregado}
+            
+            series[m] = {
+                "df": sub, 
+                "tipo": tipo, 
+                "agregado": "farmacia" in sub.columns or not sub["cat"].is_unique,
+                "tem_farmacia": "farmacia" in sub.columns
+            }
+
         if series:
-            return {"dim": c, "series": series}
+            return {"dim": c, "series": series, "col_farmacia": col_farmacia}
+            
     return None
 
 
@@ -686,83 +760,324 @@ def gerar_tabela_png(df):
     return buf.getvalue()
 
 
-def gerar_grafico_png(d, dim, medida, forma, tipo):
-    t_cat, t_val = rotulo_col(dim), rotulo_col(medida)
-    muitos_itens = len(d) > 8 and tipo == "cat" and forma != "Setores"
-    
+def gerar_grafico_png(d, dim, medida, forma, tipo, col_farmacia=None, farma_sel="Todas as Farmácias (Sobreposto)", modo_visao="Sobreposto"):
     d_plot = d.copy()
-    d_plot['rot_clean'] = d_plot['rot'].astype(str).apply(lambda x: "\n".join(textwrap.wrap(x, width=45)))
+    t_cat, t_val = rotulo_col(dim), rotulo_col(medida)
 
-    if forma == "Setores":
-        fig, ax = plt.subplots(figsize=(8.0, 6.0), dpi=200)
-        fig.patch.set_facecolor('#FBF9F4')
-        ax.set_facecolor('#FFFFFF')
-        
-        d_top = d_plot.head(10) if len(d_plot) > 10 else d_plot
-        cores = ['#42205A', '#C9AD7A', '#D8C3EE', '#7A5299', '#E5D5B5', '#A381C6', '#8F784D', '#5E347D', '#B59862', '#C9D0DA']
-        
-        wedges, texts, autotexts = ax.pie(
-            d_top['val'], 
-            labels=d_top['rot_clean'], 
-            autopct='%1.1f%%',
-            startangle=140,
-            colors=cores[:len(d_top)],
-            textprops=dict(color="#42205A", fontsize=8.5, fontweight='bold'),
-            pctdistance=0.75,
-            wedgeprops=dict(width=0.4, edgecolor='#FBF9F4', linewidth=2)
-        )
-        for autotext in autotexts:
-            autotext.set_color('#FFFFFF')
-            autotext.set_fontsize(8)
-            autotext.set_fontweight('bold')
-            
-        ax.set_title(f"{t_val} por {t_cat}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
-    elif muitos_itens:
-        fig_h = max(5.0, len(d_plot) * 0.8)
-        fig_w = 12.0
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=200)
-        fig.patch.set_facecolor('#FBF9F4')
-        ax.set_facecolor('#FFFFFF')
+    # Filtragem de farmácia individual se selecionada
+    if farma_sel and farma_sel not in ["Todas as Farmácias (Sobreposto)", "Painéis Separados (Facet)"] and "farmacia" in d_plot.columns:
+        d_plot = d_plot[d_plot["farmacia"] == farma_sel].copy()
+
+    tem_farmacia_multisserie = ("farmacia" in d_plot.columns) and (d_plot["farmacia"].nunique() > 1) and (farma_sel in ["Todas as Farmácias (Sobreposto)", "Painéis Separados (Facet)"])
+
+    # Determinar se a dimensão é categórica com nomes longos/muitos itens
+    is_cat_longo = (tipo == "cat") or (d_plot["cat"].astype(str).str.len().max() > 12)
+    
+    # Rótulo bruto e lista de categorias
+    d_plot['cat_str'] = d_plot['cat'].astype(str)
+
+    # Limite para top N se houver muitos itens categóricos
+    subtitulo_top = ""
+    cats_totais = d_plot['cat_str'].unique()
+    if is_cat_longo and len(cats_totais) > 20:
+        top_cats = d_plot.groupby("cat_str")["val"].sum().nlargest(20).index.tolist()
+        d_plot = d_plot[d_plot["cat_str"].isin(top_cats)].copy()
+        cats_totais = top_cats
+        subtitulo_top = " (Top 20 com Maiores Valores)"
+
+    # Formatação dos rótulos
+    if tipo == "tempo":
+        so_mes = (pd.to_datetime(d_plot['cat'], errors='coerce').dt.day == 1).all() if not pd.to_datetime(d_plot['cat'], errors='coerce').isna().any() else False
+        d_plot['rot_clean'] = pd.to_datetime(d_plot['cat'], errors='coerce').dt.strftime("%m/%Y" if so_mes else "%d/%m/%Y")
+        d_plot['rot_clean'] = d_plot['rot_clean'].fillna(d_plot['cat_str'])
     else:
-        fig, ax = plt.subplots(figsize=(10.0, 5.5), dpi=200)
-        fig.patch.set_facecolor('#FBF9F4')
-        ax.set_facecolor('#FFFFFF')
+        d_plot['rot_clean'] = d_plot['cat_str']
 
-    if forma == "Linhas":
-        ax.plot(d_plot['rot_clean'], d_plot['val'], color='#42205A', marker='o', markerfacecolor='#C9AD7A', linewidth=2.5, markersize=6)
-        ax.tick_params(axis='x', rotation=45 if len(d_plot) > 6 else 0)
-        ax.set_title(f"{t_val} por {t_cat}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
-        ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
-        ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
-    elif forma == "Barras":
-        if muitos_itens:
-            bars = ax.barh(d_plot['rot_clean'], d_plot['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, height=0.6)
-            max_val = d_plot['val'].max() if not d_plot['val'].empty else 1
-            ax.set_xlim(0, max_val * 1.18)
-            for bar in bars:
-                w = bar.get_width()
-                ax.annotate(f'{w:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.'),
-                            xy=(w, bar.get_y() + bar.get_height() / 2),
-                            xytext=(6, 0), textcoords="offset points", ha='left', va='center', fontsize=8.5, color='#42205A', fontweight='bold')
+    cats_unicas = d_plot['rot_clean'].unique()
+    num_x = len(cats_unicas)
+
+    # PAINÉIS SEPARADOS POR FARMÁCIA (FACET)
+    if tem_farmacia_multisserie and modo_visao == "Painéis Separados (Facet)":
+        farmacias = list(d_plot["farmacia"].unique())
+        num_f = len(farmacias)
+
+        if is_cat_longo:
+            fig, axes = plt.subplots(num_f, 1, figsize=(11.5, max(4.0, num_x * 0.35) * num_f), dpi=200)
+            fig.patch.set_facecolor('#FBF9F4')
+            if num_f == 1:
+                axes = [axes]
+
+            for idx, f in enumerate(farmacias):
+                ax = axes[idx]
+                ax.set_facecolor('#FFFFFF')
+                sub = d_plot[d_plot["farmacia"] == f].sort_values("val", ascending=True)
+                cor = cor_farmacia(f) or '#42205A'
+
+                sub_clean = ["\n".join(textwrap.wrap(str(c), width=35)) for c in sub['rot_clean']]
+                bars = ax.barh(sub_clean, sub['val'], color=cor, edgecolor='#FFFFFF', height=0.55)
+                for bar in bars:
+                    w = bar.get_width()
+                    if w > 0:
+                        ax.annotate(fmt_br(w), xy=(w, bar.get_y() + bar.get_height()/2),
+                                    xytext=(5, 0), textcoords="offset points", ha='left', va='center',
+                                    fontsize=7.5, fontweight='bold', color=cor)
+
+                ax.set_title(f"Farmácia: {f}", fontsize=11, fontweight='bold', color=cor, loc='left')
+                ax.set_xlabel(t_val, fontsize=9.5, color='#42205A', fontweight='bold')
+                ax.grid(axis='x', linestyle='--', alpha=0.5, color='#C9D0DA')
+                max_v = sub['val'].max() if not sub['val'].empty else 1
+                ax.set_xlim(0, max_v * 1.22)
+
+            fig.suptitle(f"Histórico de {t_val} por Farmácia - Comparativo Individual{subtitulo_top}", fontsize=13, fontweight='bold', color='#42205A', y=0.99)
+            plt.tight_layout()
+
+        else:
+            fig, axes = plt.subplots(num_f, 1, figsize=(11.0, 3.5 * num_f), sharex=True, dpi=200)
+            fig.patch.set_facecolor('#FBF9F4')
+            if num_f == 1:
+                axes = [axes]
+
+            for idx, f in enumerate(farmacias):
+                ax = axes[idx]
+                ax.set_facecolor('#FFFFFF')
+                sub = d_plot[d_plot["farmacia"] == f]
+                cor = cor_farmacia(f) or '#42205A'
+
+                if "Linhas" in forma:
+                    ax.plot(sub['rot_clean'], sub['val'], color=cor, marker='o', linewidth=2.5, markersize=6, label=f)
+                    for _, row in sub.iterrows():
+                        ax.annotate(fmt_br(row['val']), xy=(row['rot_clean'], row['val']),
+                                    xytext=(0, 5), textcoords="offset points", ha='center', va='bottom',
+                                    fontsize=7.5, fontweight='bold', color=cor)
+                else:
+                    bars = ax.bar(sub['rot_clean'], sub['val'], color=cor, edgecolor='#FFFFFF', width=0.5)
+                    for bar in bars:
+                        h = bar.get_height()
+                        ax.annotate(fmt_br(h), xy=(bar.get_x() + bar.get_width()/2, h),
+                                    xytext=(0, 4), textcoords="offset points", ha='center', va='bottom',
+                                    fontsize=7.5, fontweight='bold', color=cor)
+
+                ax.set_title(f"Farmácia: {f}", fontsize=11, fontweight='bold', color=cor, loc='left')
+                ax.set_ylabel(t_val, fontsize=9.5, color='#42205A', fontweight='bold')
+                ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
+                max_v = sub['val'].max() if not sub['val'].empty else 1
+                ax.set_ylim(0, max_v * 1.25)
+
+            axes[-1].tick_params(axis='x', rotation=30 if num_x > 5 else 0)
+            fig.suptitle(f"Histórico de {t_val} por Farmácia - Comparativo Individual{subtitulo_top}", fontsize=13, fontweight='bold', color='#42205A', y=0.99)
+            plt.tight_layout()
+
+    # MULTISSÉRIE SOBREPOSTA
+    elif tem_farmacia_multisserie:
+        farmacias = list(d_plot["farmacia"].unique())
+
+        if is_cat_longo and "Setores" not in forma:
+            cats_ordenadas = d_plot.groupby("rot_clean")["val"].max().sort_values(ascending=True).index.tolist()
+            num_cats = len(cats_ordenadas)
+            num_f = len(farmacias)
+
+            fig_h = max(5.5, num_cats * 0.45 + 1.5)
+            fig_w = 12.0
+
+            fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=200)
+            fig.patch.set_facecolor('#FBF9F4')
+            ax.set_facecolor('#FFFFFF')
+
+            y_indices = np.arange(num_cats)
+            total_height = 0.75
+            bar_h = total_height / num_f
+            cats_clean = ["\n".join(textwrap.wrap(str(c), width=38)) for c in cats_ordenadas]
+
+            for i, f in enumerate(farmacias):
+                sub = d_plot[d_plot["farmacia"] == f]
+                sub_dict = dict(zip(sub['rot_clean'], sub['val']))
+                vals = [sub_dict.get(cat, 0) for cat in cats_ordenadas]
+                pos = y_indices - (total_height / 2) + (i + 0.5) * bar_h
+                cor = cor_farmacia(f) or '#42205A'
+
+                bars = ax.barh(pos, vals, height=bar_h, label=f, color=cor, edgecolor='#FFFFFF', linewidth=0.8)
+                for bar in bars:
+                    w = bar.get_width()
+                    if w > 0:
+                        ax.annotate(fmt_br(w), xy=(w, bar.get_y() + bar.get_height() / 2),
+                                    xytext=(5, 0), textcoords="offset points", ha='left', va='center',
+                                    fontsize=7.5, fontweight='bold', color=cor)
+
+            ax.set_yticks(y_indices)
+            ax.set_yticklabels(cats_clean, fontsize=8.5, fontweight='500', color='#1E1E24')
+            ax.set_title(f"Comparativo de {t_val} por {t_cat}{subtitulo_top}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
             ax.set_xlabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
             ax.grid(axis='x', linestyle='--', alpha=0.5, color='#C9D0DA')
+            ax.legend(title="Farmácia", title_fontsize='9.5', fontsize='8.5', loc='upper right', frameon=True, facecolor='#FFFFFF', edgecolor='#C9D0DA')
+            max_v = d_plot['val'].max() if not d_plot['val'].empty else 1
+            ax.set_xlim(0, max_v * 1.20)
+
+        elif "Linhas" in forma:
+            fig_w = max(11.0, num_x * 0.85)
+            fig_h = 6.0
+            fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=200)
+            fig.patch.set_facecolor('#FBF9F4')
+            ax.set_facecolor('#FFFFFF')
+
+            for f in farmacias:
+                sub = d_plot[d_plot["farmacia"] == f]
+                cor = cor_farmacia(f) or '#42205A'
+                ax.plot(sub['rot_clean'], sub['val'], color=cor, marker='o', label=f, linewidth=2.8, markersize=7)
+                if num_x <= 15:
+                    for _, row in sub.iterrows():
+                        ax.annotate(fmt_br(row['val']), xy=(row['rot_clean'], row['val']),
+                                    xytext=(0, 6), textcoords="offset points", ha='center', va='bottom',
+                                    fontsize=8, fontweight='bold', color=cor)
+
+            ax.set_title(f"Histórico de {t_val} por {t_cat} - Comparativo das Farmácias{subtitulo_top}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
+            ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
+            ax.tick_params(axis='x', rotation=30 if num_x > 5 else 0, labelsize=9)
+            ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
+            ax.legend(title="Farmácia", title_fontsize='9.5', fontsize='8.5', loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, facecolor='#FFFFFF', edgecolor='#C9D0DA')
+            max_v = d_plot['val'].max() if not d_plot['val'].empty else 1
+            ax.set_ylim(0, max_v * 1.18)
+
+        elif "Barras Empilhadas" in forma:
+            sub_pivot = d_plot.pivot_table(index='rot_clean', columns='farmacia', values='val', aggfunc='sum').fillna(0)
+            bottoms = np.zeros(len(sub_pivot))
+            fig, ax = plt.subplots(figsize=(11.0, 6.0), dpi=200)
+            fig.patch.set_facecolor('#FBF9F4')
+            ax.set_facecolor('#FFFFFF')
+
+            for f in farmacias:
+                if f in sub_pivot.columns:
+                    vals = sub_pivot[f].values
+                    cor = cor_farmacia(f) or '#42205A'
+                    ax.bar(sub_pivot.index, vals, bottom=bottoms, label=f, color=cor, edgecolor='#FFFFFF', width=0.55)
+                    bottoms += vals
+
+            ax.set_title(f"Composição de {t_val} por {t_cat} (Empilhado){subtitulo_top}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
+            ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
+            ax.tick_params(axis='x', rotation=30 if len(sub_pivot) > 5 else 0)
+            ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
+            ax.legend(title="Farmácia", title_fontsize='9.5', fontsize='8.5', loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, facecolor='#FFFFFF', edgecolor='#C9D0DA')
+
+        elif "Setores" in forma:
+            sub_farma = d_plot.groupby("farmacia", as_index=False)["val"].sum()
+            cores = [cor_farmacia(f) or '#42205A' for f in sub_farma["farmacia"]]
+            fig, ax = plt.subplots(figsize=(8.5, 6.0), dpi=200)
+            fig.patch.set_facecolor('#FBF9F4')
+
+            wedges, texts, autotexts = ax.pie(
+                sub_farma['val'], 
+                labels=sub_farma['farmacia'], 
+                autopct='%1.1f%%',
+                startangle=140,
+                colors=cores,
+                textprops=dict(color="#42205A", fontsize=9, fontweight='bold'),
+                pctdistance=0.75,
+                wedgeprops=dict(width=0.4, edgecolor='#FBF9F4', linewidth=2)
+            )
+            for autotext in autotexts:
+                autotext.set_color('#FFFFFF')
+                autotext.set_fontsize(8.5)
+                autotext.set_fontweight('bold')
+
+            ax.set_title(f"Participação no Total de {t_val} por Farmácia", fontsize=13, fontweight='bold', color='#42205A', pad=18)
+
         else:
-            bars = ax.bar(d_plot['rot_clean'], d_plot['val'], color='#42205A', edgecolor='#C9AD7A', linewidth=1.2, width=0.55)
-            max_val = d_plot['val'].max() if not d_plot['val'].empty else 1
-            ax.set_ylim(0, max_val * 1.15)
-            for bar in bars:
-                height = bar.get_height()
-                ax.annotate(f'{height:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.'),
-                            xy=(bar.get_x() + bar.get_width() / 2, height),
-                            xytext=(0, 4), textcoords="offset points", ha='center', va='bottom', fontsize=8.5, color='#42205A', fontweight='bold')
-            ax.tick_params(axis='x', rotation=45 if len(d_plot) > 6 else 0)
+            x_indices = np.arange(len(cats_unicas))
+            num_f = len(farmacias)
+            total_width = 0.75
+            bar_w = total_width / num_f
+            fig, ax = plt.subplots(figsize=(max(11.0, num_x * 0.85), 6.0), dpi=200)
+            fig.patch.set_facecolor('#FBF9F4')
+            ax.set_facecolor('#FFFFFF')
+
+            for i, f in enumerate(farmacias):
+                sub = d_plot[d_plot["farmacia"] == f]
+                sub_dict = dict(zip(sub['rot_clean'], sub['val']))
+                vals = [sub_dict.get(cat, 0) for cat in cats_unicas]
+                pos = x_indices - (total_width / 2) + (i + 0.5) * bar_w
+                cor = cor_farmacia(f) or '#42205A'
+                bars = ax.bar(pos, vals, width=bar_w, label=f, color=cor, edgecolor='#FFFFFF', linewidth=0.8)
+                if num_x <= 10:
+                    for bar in bars:
+                        h = bar.get_height()
+                        if h > 0:
+                            ax.annotate(fmt_br(h), xy=(bar.get_x() + bar.get_width()/2, h),
+                                        xytext=(0, 4), textcoords="offset points", ha='center', va='bottom',
+                                        fontsize=7.5, fontweight='bold', color=cor)
+
+            ax.set_xticks(x_indices)
+            ax.set_xticklabels([textwrap.fill(str(c), 15) for c in cats_unicas], rotation=30 if num_x > 5 else 0)
+            ax.set_title(f"Comparativo de {t_val} por {t_cat}{subtitulo_top}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
             ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
             ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
-        ax.set_title(f"{t_val} por {t_cat}", fontsize=13, fontweight='bold', color='#42205A', pad=18)
+            ax.legend(title="Farmácia", title_fontsize='9.5', fontsize='8.5', loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, facecolor='#FFFFFF', edgecolor='#C9D0DA')
+            max_v = d_plot['val'].max() if not d_plot['val'].empty else 1
+            ax.set_ylim(0, max_v * 1.18)
+
+    else:
+        # Padrão para 1 farmácia ou categoria única
+        cor_base = cor_farmacia(farma_sel) if farma_sel and farma_sel not in ["Todas as Farmácias (Sobreposto)", "Painéis Separados (Facet)"] else '#42205A'
+        if not cor_base:
+            cor_base = '#42205A'
+
+        if is_cat_longo and "Setores" not in forma:
+            sub = d_plot.sort_values("val", ascending=True)
+            num_cats = len(sub)
+            fig_h = max(5.0, num_cats * 0.42 + 1.5)
+            fig, ax = plt.subplots(figsize=(11.5, fig_h), dpi=200)
+            fig.patch.set_facecolor('#FBF9F4')
+            ax.set_facecolor('#FFFFFF')
+
+            cats_clean = ["\n".join(textwrap.wrap(str(c), width=42)) for c in sub['rot_clean']]
+            bars = ax.barh(cats_clean, sub['val'], color=cor_base, edgecolor='#C9AD7A', linewidth=1.0, height=0.55)
+            for bar in bars:
+                w = bar.get_width()
+                if w > 0:
+                    ax.annotate(fmt_br(w), xy=(w, bar.get_y() + bar.get_height() / 2),
+                                xytext=(5, 0), textcoords="offset points", ha='left', va='center',
+                                fontsize=8, fontweight='bold', color=cor_base)
+
+            ax.set_xlabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
+            ax.set_title(f"{t_val} por {t_cat}{subtitulo_top}" + (f" ({farma_sel})" if farma_sel and "Todas" not in farma_sel else ""), fontsize=13, fontweight='bold', color='#42205A', pad=18)
+            ax.grid(axis='x', linestyle='--', alpha=0.5, color='#C9D0DA')
+            max_v = sub['val'].max() if not sub['val'].empty else 1
+            ax.set_xlim(0, max_v * 1.20)
+
+        else:
+            fig, ax = plt.subplots(figsize=(10.0, 5.5), dpi=200)
+            fig.patch.set_facecolor('#FBF9F4')
+            ax.set_facecolor('#FFFFFF')
+
+            if "Linhas" in forma:
+                ax.plot(d_plot['rot_clean'], d_plot['val'], color=cor_base, marker='o', markerfacecolor='#C9AD7A', linewidth=2.8, markersize=7)
+                if num_x <= 15:
+                    for _, row in d_plot.iterrows():
+                        ax.annotate(fmt_br(row['val']), xy=(row['rot_clean'], row['val']),
+                                    xytext=(0, 6), textcoords="offset points", ha='center', va='bottom',
+                                    fontsize=8, fontweight='bold', color=cor_base)
+                ax.tick_params(axis='x', rotation=30 if num_x > 5 else 0)
+                ax.set_title(f"Histórico de {t_val} por {t_cat}{subtitulo_top}" + (f" ({farma_sel})" if farma_sel and "Todas" not in farma_sel else ""), fontsize=13, fontweight='bold', color='#42205A', pad=18)
+                ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
+                ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
+                max_v = d_plot['val'].max() if not d_plot['val'].empty else 1
+                ax.set_ylim(0, max_v * 1.18)
+
+            else:
+                bars = ax.bar(d_plot['rot_clean'], d_plot['val'], color=cor_base, edgecolor='#C9AD7A', linewidth=1.2, width=0.55)
+                max_val = d_plot['val'].max() if not d_plot['val'].empty else 1
+                ax.set_ylim(0, max_val * 1.18)
+                for bar in bars:
+                    height = bar.get_height()
+                    ax.annotate(fmt_br(height), xy=(bar.get_x() + bar.get_width() / 2, height),
+                                xytext=(0, 4), textcoords="offset points", ha='center', va='bottom', fontsize=8, color='#42205A', fontweight='bold')
+                ax.tick_params(axis='x', rotation=30 if num_x > 5 else 0)
+                ax.set_ylabel(t_val, color='#42205A', fontweight='bold', fontsize=10.5)
+                ax.grid(axis='y', linestyle='--', alpha=0.5, color='#C9D0DA')
+                ax.set_title(f"{t_val} por {t_cat}{subtitulo_top}" + (f" ({farma_sel})" if farma_sel and "Todas" not in farma_sel else ""), fontsize=13, fontweight='bold', color='#42205A', pad=18)
 
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=200)
-    plt.close(fig)
+    plt.tight_layout()
+    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.3, dpi=200)
+    plt.close()
     buf.seek(0)
     return buf.getvalue()
 
@@ -770,57 +1085,209 @@ def gerar_grafico_png(d, dim, medida, forma, tipo):
 def grafico(info):
     dim, series = info["dim"], info["series"]
     medidas = list(series)
-    c1, c2 = st.columns([3, 2])
-    medida = c1.selectbox("Valor exibido", medidas, format_func=rotulo_col) if len(medidas) > 1 else medidas[0]
-    d, tipo = series[medida]["df"].copy(), series[medida]["tipo"]
     
-    formas = ["Barras", "Linhas", "Setores"]
-    forma = c2.radio("Tipo de gráfico", formas, horizontal=True)
+    d_raw = series[medidas[0]]["df"]
+    tem_farmacia = "farmacia" in d_raw.columns
+    farmacias_unicas = list(d_raw["farmacia"].unique()) if tem_farmacia else []
+    tem_multi_farma = len(farmacias_unicas) > 1
+
+    # MONTAGEM DINÂMICA DE COLUNAS SEM ESPAÇOS FANTASMA
+    if tem_multi_farma and len(medidas) > 1:
+        c1, c2, c3 = st.columns([1, 1.2, 1], vertical_alignment="bottom")
+        medida = c1.selectbox("Valor exibido", medidas, format_func=rotulo_col)
+        
+        opts_farma = ["Todas as Farmácias (Sobreposto)", "Painéis Separados por Farmácia"] + [f"Somente {f}" for f in farmacias_unicas]
+        farma_choice = c2.selectbox("Visão por Farmácia", opts_farma)
+        
+        opcoes_forma = ["Linhas (Histórico)", "Barras Agrupadas", "Barras Empilhadas", "Setores (Market Share)"]
+        forma = c3.selectbox("Tipo de gráfico", opcoes_forma)
+
+    elif tem_multi_farma:
+        c1, c2 = st.columns([1.3, 1], vertical_alignment="bottom")
+        medida = medidas[0]
+        
+        opts_farma = ["Todas as Farmácias (Sobreposto)", "Painéis Separados por Farmácia"] + [f"Somente {f}" for f in farmacias_unicas]
+        farma_choice = c1.selectbox("Visão por Farmácia", opts_farma)
+        
+        opcoes_forma = ["Linhas (Histórico)", "Barras Agrupadas", "Barras Empilhadas", "Setores (Market Share)"]
+        forma = c2.selectbox("Tipo de gráfico", opcoes_forma)
+
+    elif len(medidas) > 1:
+        c1, c2 = st.columns([1, 1], vertical_alignment="bottom")
+        medida = c1.selectbox("Valor exibido", medidas, format_func=rotulo_col)
+        farma_choice = "Todas as Farmácias (Sobreposto)"
+        
+        opcoes_forma = ["Linhas (Histórico)", "Barras Agrupadas", "Setores"]
+        forma = c2.selectbox("Tipo de gráfico", opcoes_forma)
+
+    else:
+        c1, _ = st.columns([1, 1], vertical_alignment="bottom")
+        medida = medidas[0]
+        farma_choice = "Todas as Farmácias (Sobreposto)"
+        
+        opcoes_forma = ["Linhas (Histórico)", "Barras Agrupadas", "Setores"]
+        forma = c1.selectbox("Tipo de gráfico", opcoes_forma)
+
+    # TRADUÇÃO DA ESCOLHA DE FARMÁCIA
+    if farma_choice == "Todas as Farmácias (Sobreposto)":
+        farma_sel = "Todas as Farmácias (Sobreposto)"
+        modo_visao = "Sobreposto"
+    elif farma_choice == "Painéis Separados por Farmácia":
+        farma_sel = "Painéis Separados (Facet)"
+        modo_visao = "Painéis Separados (Facet)"
+    elif farma_choice.startswith("Somente "):
+        farma_sel = farma_choice.replace("Somente ", "")
+        modo_visao = "Sobreposto"
+    else:
+        farma_sel = "Todas as Farmácias (Sobreposto)"
+        modo_visao = "Sobreposto"
+
+    d = series[medida]["df"].copy()
+    tipo = series[medida]["tipo"]
 
     if series[medida]["agregado"]:
         st.markdown(f"<div class='nota'>Valores somados por {esc(rotulo_col(dim).lower())}.</div>", unsafe_allow_html=True)
 
-    if tipo == "cat":
-        d = d.sort_values("val", ascending=True if len(d) > 8 else False)
+    if farma_sel not in ["Todas as Farmácias (Sobreposto)", "Painéis Separados (Facet)"] and "farmacia" in d.columns:
+        d_exib = d[d["farmacia"] == farma_sel].copy()
+        tem_farmacia_multisserie = False
     else:
-        d = d.sort_values("cat")
+        d_exib = d.copy()
+        tem_farmacia_multisserie = "farmacia" in d_exib.columns and d_exib["farmacia"].nunique() > 1
+
+    if tipo == "cat":
+        d_exib = d_exib.sort_values("val", ascending=True if len(d_exib) > 8 else False)
+    else:
+        d_exib = d_exib.sort_values("cat")
+
     t_cat, t_val = rotulo_col(dim), rotulo_col(medida)
     if tipo == "tempo":
-        so_mes = (d["cat"].dt.day == 1).all()
-        d["rot"] = d["cat"].dt.strftime("%m/%Y" if so_mes else "%d/%m/%Y")
+        so_mes = (d_exib["cat"].dt.day == 1).all()
+        d_exib["rot"] = d_exib["cat"].dt.strftime("%m/%Y" if so_mes else "%d/%m/%Y")
     else:
-        d["rot"] = d["cat"].astype(str)
+        d_exib["rot"] = d_exib["cat"].astype(str)
 
-    tip = [alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
+    rotacao_x = -45 if len(d_exib) > 6 or d_exib["rot"].str.len().max() > 8 else 0
     eixo_y = alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6, domain=False, ticks=False)
 
-    rotacao_x = -45 if len(d) > 6 or d["rot"].str.len().max() > 8 else 0
+    if tem_farmacia_multisserie and modo_visao == "Painéis Separados (Facet)":
+        domain, range_colors = mapa_cores_farmacias(d_exib["farmacia"].unique())
+        scale_cores = alt.Scale(domain=domain, range=range_colors)
+        
+        if "Linhas" in forma:
+            graf = alt.Chart(d_exib).mark_line(
+                strokeWidth=2.8, point=alt.OverlayMarkDef(filled=True, size=60)
+            ).encode(
+                x=alt.X("rot:O", title=None, axis=alt.Axis(labelAngle=rotacao_x)),
+                y=alt.Y("val:Q", title=t_val, axis=eixo_y),
+                color=alt.Color("farmacia:N", title="Farmácia", scale=scale_cores, legend=None),
+                tooltip=[alt.Tooltip("farmacia:N", title="Farmácia"), alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
+            ).properties(width=850, height=180).facet(
+                row=alt.Row("farmacia:N", title=None)
+            )
+        else:
+            graf = alt.Chart(d_exib).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+                x=alt.X("rot:O", title=None, axis=alt.Axis(labelAngle=rotacao_x)),
+                y=alt.Y("val:Q", title=t_val, axis=eixo_y),
+                color=alt.Color("farmacia:N", title="Farmácia", scale=scale_cores, legend=None),
+                tooltip=[alt.Tooltip("farmacia:N", title="Farmácia"), alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
+            ).properties(width=850, height=180).facet(
+                row=alt.Row("farmacia:N", title=None)
+            )
 
-    if forma == "Linhas":
-        x = alt.X("cat:T", title=None, axis=alt.Axis(grid=False, labelAngle=rotacao_x, format="%m/%Y" if so_mes else "%d/%m", labelOverlap="greedy")) \
-            if tipo == "tempo" else alt.X("rot:O", title=None, axis=alt.Axis(grid=False, labelAngle=rotacao_x, labelOverlap="greedy"))
-        graf = alt.Chart(d).mark_line(
-            color=ROXO, strokeWidth=2.5, point=alt.OverlayMarkDef(color=DOURADO, stroke=ROXO, filled=True, size=70)
-        ).encode(x=x, y=alt.Y("val:Q", title=t_val, axis=eixo_y), tooltip=tip).properties(height=380)
-    elif forma == "Setores":
-        graf = alt.Chart(d).mark_arc(innerRadius=50, stroke="#fff").encode(
-            theta=alt.Theta(field="val", type="quantitative"),
-            color=alt.Color(field="rot", type="nominal", title=t_cat,
-                            scale=alt.Scale(scheme="purples")),
-            tooltip=tip
-        ).properties(height=380)
-    elif tipo == "cat" and (len(d) > 8 or d["rot"].str.len().max() > 16):
-        graf = alt.Chart(d).mark_bar(color=ROXO, cornerRadiusEnd=4, size=18).encode(
-            y=alt.Y("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelLimit=300, domain=False, ticks=False)),
-            x=alt.X("val:Q", title=t_val, axis=alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6, domain=False, ticks=False)),
-            tooltip=tip,
-        ).properties(height=max(240, 32 * len(d)))
+    elif tem_farmacia_multisserie:
+        domain, range_colors = mapa_cores_farmacias(d_exib["farmacia"].unique())
+        scale_cores = alt.Scale(domain=domain, range=range_colors)
+
+        if "Linhas" in forma:
+            x_enc = alt.X("cat:T", title=None, axis=alt.Axis(grid=False, labelAngle=rotacao_x, format="%m/%Y" if so_mes else "%d/%m", labelOverlap="greedy")) \
+                    if tipo == "tempo" else alt.X("rot:O", title=None, axis=alt.Axis(grid=False, labelAngle=rotacao_x, labelOverlap="greedy"))
+            graf = alt.Chart(d_exib).mark_line(
+                strokeWidth=2.8, point=alt.OverlayMarkDef(filled=True, size=65)
+            ).encode(
+                x=x_enc,
+                y=alt.Y("val:Q", title=t_val, axis=eixo_y),
+                color=alt.Color("farmacia:N", title="Farmácia", scale=scale_cores),
+                tooltip=[alt.Tooltip("farmacia:N", title="Farmácia"), alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
+            ).properties(height=400)
+
+        elif "Barras Agrupadas" in forma or forma == "Barras":
+            graf = alt.Chart(d_exib).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+                x=alt.X("rot:N", title=None, axis=alt.Axis(labelAngle=rotacao_x, labelLimit=160, grid=False, domain=False, ticks=False)),
+                y=alt.Y("val:Q", title=t_val, axis=eixo_y),
+                xOffset="farmacia:N",
+                color=alt.Color("farmacia:N", title="Farmácia", scale=scale_cores),
+                tooltip=[alt.Tooltip("farmacia:N", title="Farmácia"), alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
+            ).properties(height=400)
+
+        elif "Barras Empilhadas" in forma:
+            graf = alt.Chart(d_exib).mark_bar().encode(
+                x=alt.X("rot:N", title=None, axis=alt.Axis(labelAngle=rotacao_x, labelLimit=160, grid=False, domain=False, ticks=False)),
+                y=alt.Y("val:Q", title=t_val, axis=eixo_y),
+                color=alt.Color("farmacia:N", title="Farmácia", scale=scale_cores),
+                tooltip=[alt.Tooltip("farmacia:N", title="Farmácia"), alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
+            ).properties(height=400)
+
+        elif "Setores" in forma:
+            graf = alt.Chart(d_exib).mark_arc(innerRadius=50, stroke="#fff").encode(
+                theta=alt.Theta(field="val", type="quantitative"),
+                color=alt.Color(field="farmacia", type="nominal", title="Farmácia", scale=scale_cores),
+                tooltip=[alt.Tooltip("farmacia:N", title="Farmácia"), alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
+            ).properties(height=380)
+
     else:
-        graf = alt.Chart(d).mark_bar(color=ROXO, cornerRadiusEnd=4).encode(
-            x=alt.X("rot:N", sort=list(d["rot"]), title=None, axis=alt.Axis(labelAngle=rotacao_x, labelLimit=160, grid=False, domain=False, ticks=False)),
-            y=alt.Y("val:Q", title=t_val, axis=eixo_y),
-            tooltip=tip,
-        ).properties(height=380)
+        cat_farmacia_names = [cor_farmacia(x) for x in d_exib["rot"]]
+        tem_cores_especificas = any(c is not None for c in cat_farmacia_names)
+        
+        cor_single = cor_farmacia(farma_sel) if farma_sel not in ["Todas as Farmácias (Sobreposto)", "Painéis Separados (Facet)"] else ROXO
+        if not cor_single:
+            cor_single = ROXO
+
+        tip = [alt.Tooltip("rot:N", title=t_cat), alt.Tooltip("val:Q", title=t_val, format=",.2~f")]
+
+        if tem_cores_especificas:
+            domain, range_colors = mapa_cores_farmacias(d_exib["rot"].unique())
+            scale_cores = alt.Scale(domain=domain, range=range_colors)
+            enc_color = alt.Color("rot:N", title=t_cat, scale=scale_cores, legend=None)
+        else:
+            enc_color = alt.value(cor_single)
+
+        if "Linhas" in forma:
+            x_enc = alt.X("cat:T", title=None, axis=alt.Axis(grid=False, labelAngle=rotacao_x, format="%m/%Y" if so_mes else "%d/%m", labelOverlap="greedy")) \
+                    if tipo == "tempo" else alt.X("rot:O", title=None, axis=alt.Axis(grid=False, labelAngle=rotacao_x, labelOverlap="greedy"))
+            graf = alt.Chart(d_exib).mark_line(
+                color=cor_single, strokeWidth=2.8, point=alt.OverlayMarkDef(color=DOURADO, stroke=cor_single, filled=True, size=70)
+            ).encode(x=x_enc, y=alt.Y("val:Q", title=t_val, axis=eixo_y), tooltip=tip).properties(height=380)
+
+        elif "Setores" in forma:
+            if tem_cores_especificas:
+                graf = alt.Chart(d_exib).mark_arc(innerRadius=50, stroke="#fff").encode(
+                    theta=alt.Theta(field="val", type="quantitative"),
+                    color=enc_color,
+                    tooltip=tip
+                ).properties(height=380)
+            else:
+                graf = alt.Chart(d_exib).mark_arc(innerRadius=50, stroke="#fff").encode(
+                    theta=alt.Theta(field="val", type="quantitative"),
+                    color=alt.Color(field="rot", type="nominal", title=t_cat, scale=alt.Scale(scheme="purples")),
+                    tooltip=tip
+                ).properties(height=380)
+
+        elif tipo == "cat" and (len(d_exib) > 8 or d_exib["rot"].str.len().max() > 16):
+            graf = alt.Chart(d_exib).mark_bar(cornerRadiusEnd=4, size=18).encode(
+                y=alt.Y("rot:N", sort=list(d_exib["rot"]), title=None, axis=alt.Axis(labelLimit=300, domain=False, ticks=False)),
+                x=alt.X("val:Q", title=t_val, axis=alt.Axis(grid=True, gridColor=CINZA, gridOpacity=0.6, domain=False, ticks=False)),
+                color=enc_color,
+                tooltip=tip,
+            ).properties(height=max(240, 32 * len(d_exib)))
+
+        else:
+            graf = alt.Chart(d_exib).mark_bar(cornerRadiusEnd=4).encode(
+                x=alt.X("rot:N", sort=list(d_exib["rot"]), title=None, axis=alt.Axis(labelAngle=rotacao_x, labelLimit=160, grid=False, domain=False, ticks=False)),
+                y=alt.Y("val:Q", title=t_val, axis=eixo_y),
+                color=enc_color,
+                tooltip=tip,
+            ).properties(height=380)
 
     graf = graf.configure(font="Poppins", background="transparent").configure_view(stroke=None).configure_axis(
         labelColor="#5E4A70", titleColor=ROXO, labelFontSize=11, titleFontSize=12, titleFontWeight=600
@@ -829,9 +1296,10 @@ def grafico(info):
 
     col_dl1, col_dl2 = st.columns([1, 1])
     try:
+        png_data = gerar_grafico_png(d, dim, medida, forma, tipo, col_farmacia=info.get("col_farmacia"), farma_sel=farma_sel, modo_visao=modo_visao)
         col_dl1.download_button(
             "Baixar Gráfico em PNG",
-            data=gerar_grafico_png(d, dim, medida, forma, tipo),
+            data=png_data,
             file_name="grafico_farmazids.png",
             mime="image/png"
         )
@@ -934,7 +1402,6 @@ def tela_dividida():
 
 
 def topo():
-    # Barra Superior Centralizada Minimalista
     c1, c2, c3 = st.columns([1, 4, 3.4], vertical_alignment="center")
     
     with c1:
@@ -947,7 +1414,6 @@ def topo():
         nome = st.session_state.get("nome", "Usuário")
         foto = st.session_state.get("foto")
         
-        # Obtém a foto real ou o emblema padrão
         raw_b64 = foto if foto else img_b64(EMBLEMA)
         if raw_b64:
             img_tag = f"<img class='perfil-foto-circulo' src='data:image/png;base64,{raw_b64}'>"
